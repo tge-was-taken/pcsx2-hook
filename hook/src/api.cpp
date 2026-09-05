@@ -117,6 +117,9 @@ struct pcsx2hook_ctx {
     std::atomic<int> exitCode{1};
     std::string error;
     std::string serial;
+    std::vector<uint32_t> frame;
+    uint32_t frameWidth = 0;
+    uint32_t frameHeight = 0;
 };
 
 extern "C" {
@@ -298,19 +301,27 @@ void pcsx2hook_run_on_gs_thread(pcsx2hook_ctx* ctx, pcsx2hook_void_fn fn, void* 
     MTGS::WaitGS(false, false, false);
 }
 
+// Asking for the size takes the snapshot and keeps it, so the fetch that follows returns that same
+// frame rather than a second one taken a moment later.
 size_t pcsx2hook_read_framebuffer(pcsx2hook_ctx* ctx, void* out, size_t size, uint32_t* width,
                                   uint32_t* height) {
     if (!ctx) return 0;
-    uint32_t w = 0, h = 0;
-    std::vector<uint32_t> pixels;
-    if (!MTGS::SaveMemorySnapshot(0, 0, false, false, &w, &h, &pixels)) {
-        ctx->error = "no frame buffer to read: the null renderer fills none";
-        return 0;
+    if (ctx->frame.empty()) {
+        uint32_t w = 0, h = 0;
+        if (!MTGS::SaveMemorySnapshot(0, 0, false, false, &w, &h, &ctx->frame)) {
+            ctx->error = "no frame buffer to read: the null renderer fills none";
+            return 0;
+        }
+        ctx->frameWidth = w;
+        ctx->frameHeight = h;
     }
-    if (width) *width = w;
-    if (height) *height = h;
-    const size_t needed = pixels.size() * sizeof(uint32_t);
-    if (out && size >= needed) std::memcpy(out, pixels.data(), needed);
+    if (width) *width = ctx->frameWidth;
+    if (height) *height = ctx->frameHeight;
+    const size_t needed = ctx->frame.size() * sizeof(uint32_t);
+    if (out && size >= needed) {
+        std::memcpy(out, ctx->frame.data(), needed);
+        ctx->frame.clear();
+    }
     return needed;
 }
 
