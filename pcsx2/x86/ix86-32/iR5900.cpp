@@ -2715,6 +2715,24 @@ StartRecomp:
 
 	if (doRecompilation)
 	{
+#ifdef PCSX2HOOK
+		// coverage. A block is straight-line, so one `add qword [slot], 1` at its head records
+		// that every instruction in [startpc, s_nEndBlock) ran. Unarmed, this returns null and emits
+		// nothing, so an untraced build pays for a compile-time branch and no runtime cost at all.
+		const Hooks::ExecBlockSlots hookBlock = Hooks::ExecBlockCounter(startpc, s_nEndBlock);
+		if (hookBlock.count)
+		{
+			xADD(ptr64[hookBlock.count], 1);
+			// Which EE threads ran this block. The live thread's bit is a host global the trace keeps
+			// current, so this stays two instructions and no call.
+			if (hookBlock.threads && Hooks::ExecThreadBit())
+			{
+				xMOV(eax, ptr32[Hooks::ExecThreadBit()]);
+				xOR(ptr32[hookBlock.threads], eax);
+			}
+		}
+
+#endif
 		// Finally: Generate x86 recompiled code!
 		g_pCurInstInfo = s_pInstCache;
 		while (!g_branch && pc < s_nEndBlock)

@@ -12,6 +12,9 @@
 #include "DebugTools/DebugInterface.h"
 #include "DebugTools/Breakpoints.h"
 #include "Host.h"
+#ifdef PCSX2HOOK
+#include "Hooks.h"
+#endif
 #include "VMManager.h"
 
 #include "fmt/format.h"
@@ -916,6 +919,13 @@ void SYSCALL()
 
 	BIOS_LOG("Bios call: %s (%x)", R5900::bios[call], call);
 
+#ifdef PCSX2HOOK
+	// recSYSCALL calls this same routine, so the trace sees every syscall under both CPU modes.
+	// Two exceptions it cannot see, both recompiler-only: FlushCache (0x64) and iFlushCache (0x68) are
+	// elided in recSYSCALL when $v1 is a known constant.
+	Hooks::OnSyscall(call);
+
+#endif
 
 	switch (static_cast<Syscall>(call))
 	{
