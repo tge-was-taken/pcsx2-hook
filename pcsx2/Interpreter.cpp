@@ -8,6 +8,9 @@
 #include "Cache.h"
 
 #include "DebugTools/Breakpoints.h"
+#ifdef PCSX2HOOK
+#include "Hooks.h"
+#endif
 
 #include "common/FastJmp.h"
 
@@ -212,6 +215,21 @@ static void execI()
 
 
 	cpuBlockCycles += opcode.cycles * (2 - ((cpuRegs.CP0.n.Config >> 18) & 0x1));
+#ifdef PCSX2HOOK
+
+	// bracket the instruction so a sink can diff the register file either side of it and
+	// recover (operands -> result) without modelling any of the arithmetic itself.
+	if (Hooks::HasInsnSink())
+	{
+		// A branch interprets its delay slot through a nested execI, which overwrites cpuRegs.code, so
+		// the pair has to carry this instruction's own word rather than read it back afterwards.
+		const u32 hookCode = cpuRegs.code;
+		Hooks::OnInsnBefore(pc, hookCode);
+		opcode.interpret();
+		Hooks::OnInsnAfter(pc, hookCode);
+		return;
+	}
+#endif
 
 	opcode.interpret();
 }
