@@ -84,8 +84,8 @@ The library builds and links: `libpcsx2hook.so`, exporting all thirteen `pcsx2ho
 with nothing unresolved at load. One `pcsx2hook` namespace, a class per module owned by
 `Diagnostics`, every environment read behind `Config`, and a C API in `pcsx2hook.h`.
 
-Two API entry points are honest stubs rather than implementations, and say so through
-`pcsx2hook_last_error`: `pcsx2hook_boot` and `pcsx2hook_run_frames`. `Core::run` owns a blocking run
-loop that never yields, so stepping a fixed number of frames from outside needs that loop restructured
-first. Everything else on the API works: arming traces, registering hooks, calling into the guest,
-reading guest memory and the frame buffer, savestates, and flushing the traces.
+`Core::run` owns a blocking run loop that never yields, so there is no call that steps a fixed number
+of frames: a host drives the emulator through the split lifecycle (`pcsx2hook_start`, then poll
+`pcsx2hook_is_finished`) and does its per-frame work from the `on_frame` callback. Everything else on
+the API works: arming traces, registering hooks, calling into the guest, reading guest memory and the
+frame buffer, savestates, and flushing the traces.

@@ -191,6 +191,14 @@ bool Core::run(const VMBootParameters& params) {
     }
     mSaveStateFrame = uint32_t(Config::get().getInt("PCSX2HOOK_SAVESTATE_FRAME", 0));
 
+    // The two 'jr $ra; nop' stubs the hook registry returns through: one for a post-handler, one for
+    // a guest call. They go in the kernel-reserved gap below the user ELF base (0x00100000), so they
+    // clobber no program code, and are installed before onVmReady so a hook registered there works.
+    const uint32_t sentinel =
+        uint32_t(Config::get().getInt("PCSX2HOOK_SENTINEL_BASE", 0x000FFF00));
+    Hooks::SetReturnSentinel(sentinel);
+    Hooks::SetCallMarker(sentinel + 8);
+
     onVmReady();
 
     VMManager::SetLimiterMode(Config::get().isSet("PCSX2HOOK_EE_LIMIT")

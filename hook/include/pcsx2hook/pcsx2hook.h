@@ -12,9 +12,9 @@
  * pcsx2hook_ctx* ctx = pcsx2hook_create(&config);
  * pcsx2hook_early_init(ctx);
  * pcsx2hook_init(ctx, argc, argv);
- * pcsx2hook_apply_settings_override(ctx);
+ * pcsx2hook_apply_settings(ctx);
  * pcsx2hook_start(ctx);
- * while (!pcsx2hook_finished(ctx)) { ... host event pump ... }
+ * while (!pcsx2hook_is_finished(ctx)) { ... host event pump ... }
  * int code = pcsx2hook_join(ctx);
  * pcsx2hook_shutdown(ctx);
  * pcsx2hook_destroy(ctx);
@@ -139,10 +139,10 @@ PCSX2HOOK_API void pcsx2hook_destroy(pcsx2hook_ctx* ctx);
 
 /**
  * @brief Arms a trace.
- * @return Non-zero on success. Fails only for an unknown @p which; see ::pcsx2hook_last_error.
+ * @return Non-zero on success. Fails only for an unknown @p which; see ::pcsx2hook_get_last_error.
  * @note Before ::pcsx2hook_start, since a trace hooks code the recompiler compiles once.
  */
-PCSX2HOOK_API int pcsx2hook_arm(pcsx2hook_ctx* ctx, pcsx2hook_trace which);
+PCSX2HOOK_API int pcsx2hook_trace_arm(pcsx2hook_ctx* ctx, pcsx2hook_trace which);
 
 /** @name Lifecycle
  *  Call in the order listed. See @ref lifecycle.
@@ -159,19 +159,19 @@ PCSX2HOOK_API void pcsx2hook_early_init(pcsx2hook_ctx* ctx);
 PCSX2HOOK_API int pcsx2hook_init(pcsx2hook_ctx* ctx, int argc, char** argv);
 
 /** @brief Whether the run wants a window, given its configuration and arguments. */
-PCSX2HOOK_API int pcsx2hook_window_requested(pcsx2hook_ctx* ctx);
+PCSX2HOOK_API int pcsx2hook_wants_window(pcsx2hook_ctx* ctx);
 
 /** @brief Opens the emulator's own GS window, for watching it beside a host renderer. */
 PCSX2HOOK_API int pcsx2hook_create_dev_window(pcsx2hook_ctx* ctx);
 
 /** @brief Applies the headless GS and CPU settings, and invokes @c on_settings. */
-PCSX2HOOK_API void pcsx2hook_apply_settings_override(pcsx2hook_ctx* ctx);
+PCSX2HOOK_API void pcsx2hook_apply_settings(pcsx2hook_ctx* ctx);
 
 /** @brief Boots and starts the CPU thread. Returns immediately. */
 PCSX2HOOK_API int pcsx2hook_start(pcsx2hook_ctx* ctx);
 
 /** @brief Whether emulation has stopped. Poll from the host's event loop. */
-PCSX2HOOK_API int pcsx2hook_finished(pcsx2hook_ctx* ctx);
+PCSX2HOOK_API int pcsx2hook_is_finished(pcsx2hook_ctx* ctx);
 
 /**
  * @brief Pumps the emulator's own window.
@@ -190,7 +190,7 @@ PCSX2HOOK_API void pcsx2hook_shutdown(pcsx2hook_ctx* ctx);
 
 /** @} */
 
-/** @brief DualShock2 inputs, in the order ::pcsx2hook_set_pad_button indexes. */
+/** @brief DualShock2 inputs, in the order ::pcsx2hook_pad_set_button indexes. */
 typedef enum
 {
 	PCSX2HOOK_PAD_UP = 0, PCSX2HOOK_PAD_RIGHT, PCSX2HOOK_PAD_DOWN, PCSX2HOOK_PAD_LEFT,
@@ -209,7 +209,7 @@ typedef enum
  * @param bind A ::pcsx2hook_pad_button.
  * @note Applied on the CPU thread, so this is safe to call from a host's event loop.
  */
-PCSX2HOOK_API void pcsx2hook_set_pad_button(pcsx2hook_ctx* ctx, int bind, int pressed);
+PCSX2HOOK_API void pcsx2hook_pad_set_button(pcsx2hook_ctx* ctx, int bind, int pressed);
 
 /** @brief Runs at 1x speed when non-zero, or as fast as it will go when zero. */
 PCSX2HOOK_API void pcsx2hook_set_speed_limit(pcsx2hook_ctx* ctx, int enabled);
@@ -220,15 +220,15 @@ PCSX2HOOK_API void pcsx2hook_set_speed_limit(pcsx2hook_ctx* ctx, int enabled);
  *  @{ */
 
 /** @brief Sets a string setting. */
-PCSX2HOOK_API void pcsx2hook_set_string(pcsx2hook_ctx* ctx, const char* section, const char* key,
+PCSX2HOOK_API void pcsx2hook_setting_set_string(pcsx2hook_ctx* ctx, const char* section, const char* key,
 	const char* value);
 
 /** @brief Sets a boolean setting. */
-PCSX2HOOK_API void pcsx2hook_set_bool(pcsx2hook_ctx* ctx, const char* section, const char* key,
+PCSX2HOOK_API void pcsx2hook_setting_set_bool(pcsx2hook_ctx* ctx, const char* section, const char* key,
 	int value);
 
 /** @brief Appends to a list-valued setting. */
-PCSX2HOOK_API void pcsx2hook_add_string_list(pcsx2hook_ctx* ctx, const char* section,
+PCSX2HOOK_API void pcsx2hook_setting_add_string_list(pcsx2hook_ctx* ctx, const char* section,
 	const char* key, const char* value);
 
 /** @} */
@@ -237,28 +237,20 @@ PCSX2HOOK_API void pcsx2hook_add_string_list(pcsx2hook_ctx* ctx, const char* sec
  * @brief Hooks a guest function.
  * @param addr Guest address of the function's entry.
  * @param pre  Runs at entry. May be null.
- * @param post Runs after it returns. May be null; needs ::pcsx2hook_set_return_sentinel.
+ * @param post Runs after it returns, with its result in @c $v0. May be null.
  * @param user Passed to both handlers.
  * @return Non-zero on success.
  * @note Registering plants a trampoline, so it must happen before @p addr is first executed:
  *       @c on_vm_ready is the place.
+ * @note A post-handler works by returning through a @c "jr $ra; nop" stub the library installs in
+ *       the kernel-reserved gap below the user ELF base. Override its address with the
+ *       @c PCSX2HOOK_SENTINEL_BASE config key if a program happens to use that gap.
  */
-PCSX2HOOK_API int pcsx2hook_register(pcsx2hook_ctx* ctx, uint32_t addr, pcsx2hook_pre_fn pre,
+PCSX2HOOK_API int pcsx2hook_hook_add(pcsx2hook_ctx* ctx, uint32_t addr, pcsx2hook_pre_fn pre,
 	pcsx2hook_post_fn post, void* user);
 
-/**
- * @brief Points the runtime at a @c "jr $ra; nop" stub in unused guest RAM.
- *
- * Post-hooked calls return through it, which is how the post-handler gets control. The host writes
- * the stub itself and passes its address. Post-handlers do nothing until this is set.
- */
-PCSX2HOOK_API void pcsx2hook_set_return_sentinel(pcsx2hook_ctx* ctx, uint32_t addr);
-
-/** @brief A second such stub, the return marker ::pcsx2hook_call_ee needs. */
-PCSX2HOOK_API void pcsx2hook_set_call_marker(pcsx2hook_ctx* ctx, uint32_t addr);
-
 /** @brief Observes every hooked call before its own handler, for recording the whole stream. */
-PCSX2HOOK_API void pcsx2hook_set_observer(pcsx2hook_ctx* ctx, pcsx2hook_post_fn fn, void* user);
+PCSX2HOOK_API void pcsx2hook_hook_set_observer(pcsx2hook_ctx* ctx, pcsx2hook_post_fn fn, void* user);
 
 /**
  * @brief Runs a guest function to completion and returns @c $v0.
@@ -266,7 +258,6 @@ PCSX2HOOK_API void pcsx2hook_set_observer(pcsx2hook_ctx* ctx, pcsx2hook_post_fn 
  * @param count How many of @p args to pass.
  * @warning Only from inside a hook handler, and only for a function that does not block: EE
  *          interrupts are masked for the duration, so one waiting on an interrupt or a DMA hangs.
- *          Needs ::pcsx2hook_set_call_marker.
  */
 PCSX2HOOK_API uint32_t pcsx2hook_call_ee(pcsx2hook_ctx* ctx, uint32_t pc, const uint32_t* args,
 	size_t count);
@@ -275,32 +266,32 @@ PCSX2HOOK_API uint32_t pcsx2hook_call_ee(pcsx2hook_ctx* ctx, uint32_t pc, const 
  * @brief Maps a guest address to a host pointer.
  * @return Null when the range is not mapped or would run past the end of main RAM.
  */
-PCSX2HOOK_API void* pcsx2hook_guest(pcsx2hook_ctx* ctx, uint32_t addr, uint32_t size);
+PCSX2HOOK_API void* pcsx2hook_mem_map(pcsx2hook_ctx* ctx, uint32_t addr, uint32_t size);
 
 /**
  * @brief The base of EE main RAM, for a host that overlays its own structs on it.
  * @param size Receives the mapped size in bytes. May be null.
  * @return Null before the VM is initialized.
  */
-PCSX2HOOK_API void* pcsx2hook_ram_base(pcsx2hook_ctx* ctx, uint32_t* size);
+PCSX2HOOK_API void* pcsx2hook_mem_get_ram_base(pcsx2hook_ctx* ctx, uint32_t* size);
 
 /** @brief The EE program counter, for a sampler or a heartbeat. */
-PCSX2HOOK_API uint32_t pcsx2hook_ee_pc(pcsx2hook_ctx* ctx);
+PCSX2HOOK_API uint32_t pcsx2hook_get_ee_pc(pcsx2hook_ctx* ctx);
 
 /**
  * @brief The running disc's serial, for example @c "SLUS-21621".
  * @return Owned by the context and valid until the next call. Empty before boot.
  */
-PCSX2HOOK_API const char* pcsx2hook_disc_serial(pcsx2hook_ctx* ctx);
+PCSX2HOOK_API const char* pcsx2hook_get_disc_serial(pcsx2hook_ctx* ctx);
 
-/** @brief Loads a savestate. @return Non-zero on success; see ::pcsx2hook_last_error. */
-PCSX2HOOK_API int pcsx2hook_load_state(pcsx2hook_ctx* ctx, const char* path);
+/** @brief Loads a savestate. @return Non-zero on success; see ::pcsx2hook_get_last_error. */
+PCSX2HOOK_API int pcsx2hook_state_load(pcsx2hook_ctx* ctx, const char* path);
 
 /** @brief Writes a savestate. @return Non-zero on success. */
-PCSX2HOOK_API int pcsx2hook_save_state(pcsx2hook_ctx* ctx, const char* path);
+PCSX2HOOK_API int pcsx2hook_state_save(pcsx2hook_ctx* ctx, const char* path);
 
 /** @brief Runs @p fn on the GS thread and waits, the only safe point to read GS-owned state. */
-PCSX2HOOK_API void pcsx2hook_run_on_gs_thread(pcsx2hook_ctx* ctx, pcsx2hook_void_fn fn, void* user);
+PCSX2HOOK_API void pcsx2hook_gs_run_on_thread(pcsx2hook_ctx* ctx, pcsx2hook_void_fn fn, void* user);
 
 /**
  * @brief Reads the emulated frame buffer as RGBA8.
@@ -311,7 +302,7 @@ PCSX2HOOK_API void pcsx2hook_run_on_gs_thread(pcsx2hook_ctx* ctx, pcsx2hook_void
  * @note Asking for the size takes the snapshot and keeps it, so the fetch that follows returns that
  *       same frame rather than a second one taken a moment later.
  */
-PCSX2HOOK_API size_t pcsx2hook_read_framebuffer(pcsx2hook_ctx* ctx, void* out, size_t size,
+PCSX2HOOK_API size_t pcsx2hook_gs_read_framebuffer(pcsx2hook_ctx* ctx, void* out, size_t size,
 	uint32_t* width, uint32_t* height);
 
 /**
@@ -320,22 +311,22 @@ PCSX2HOOK_API size_t pcsx2hook_read_framebuffer(pcsx2hook_ctx* ctx, void* out, s
  *              library has no model of a renderer, so it never interprets this.
  * @param object Host handle for the thing being drawn. Recorded as-is.
  * @param pipeline Host handle for the pipeline drawing it. Recorded as-is.
- * @note Every push needs a matching ::pcsx2hook_pop_draw.
+ * @note Every push needs a matching ::pcsx2hook_draw_pop.
  * @note Attribution only reaches work the guest does while the draw is open. An engine that queues
  *       its packets and kicks the DMA chain once per frame does most of its GS and VU work after
  *       the draw has been popped, and that work is left unattributed.
  */
-PCSX2HOOK_API void pcsx2hook_push_draw(pcsx2hook_ctx* ctx, const char* label, uint32_t object,
+PCSX2HOOK_API void pcsx2hook_draw_push(pcsx2hook_ctx* ctx, const char* label, uint32_t object,
 	uint32_t pipeline);
 
 /** @brief Closes the innermost draw context. */
-PCSX2HOOK_API void pcsx2hook_pop_draw(pcsx2hook_ctx* ctx);
+PCSX2HOOK_API void pcsx2hook_draw_pop(pcsx2hook_ctx* ctx);
 
 /**
  * @brief Sets one of the library's own settings by the name its environment variable uses.
  * @note Before ::pcsx2hook_start, since most are read once while arming.
  */
-PCSX2HOOK_API void pcsx2hook_set_config(pcsx2hook_ctx* ctx, const char* name, const char* value);
+PCSX2HOOK_API void pcsx2hook_config_set(pcsx2hook_ctx* ctx, const char* name, const char* value);
 
 /** @name Symbols
  *  @{ */
@@ -345,14 +336,14 @@ PCSX2HOOK_API void pcsx2hook_set_config(pcsx2hook_ctx* ctx, const char* name, co
  * @param out Null to ask for the size.
  * @return Length needed including the terminator. Falls back to the raw address with no map loaded.
  */
-PCSX2HOOK_API size_t pcsx2hook_resolve_symbol(pcsx2hook_ctx* ctx, uint32_t pc, char* out,
+PCSX2HOOK_API size_t pcsx2hook_symbols_resolve(pcsx2hook_ctx* ctx, uint32_t pc, char* out,
 	size_t size);
 
 /** @brief Whether @p pc lies inside the program's own text, as opposed to the BIOS or a module. */
-PCSX2HOOK_API int pcsx2hook_in_code_range(pcsx2hook_ctx* ctx, uint32_t pc);
+PCSX2HOOK_API int pcsx2hook_symbols_is_in_code_range(pcsx2hook_ctx* ctx, uint32_t pc);
 
 /** @brief Loads the symbol map now rather than on first use. */
-PCSX2HOOK_API void pcsx2hook_load_symbols(pcsx2hook_ctx* ctx);
+PCSX2HOOK_API void pcsx2hook_symbols_load(pcsx2hook_ctx* ctx);
 
 /** @} */
 
@@ -377,7 +368,7 @@ PCSX2HOOK_API void pcsx2hook_gs_arm_capture(pcsx2hook_ctx* ctx, int skip);
 PCSX2HOOK_API void pcsx2hook_gs_mark_capture_start(pcsx2hook_ctx* ctx);
 
 /** @brief How many frames the trace has recorded on its own, outside a capture. */
-PCSX2HOOK_API uint32_t pcsx2hook_gs_standalone_frames(pcsx2hook_ctx* ctx);
+PCSX2HOOK_API uint32_t pcsx2hook_gs_get_standalone_frames(pcsx2hook_ctx* ctx);
 
 /**
  * @brief Writes which code submitted each GS batch.
@@ -390,7 +381,7 @@ PCSX2HOOK_API void pcsx2hook_gs_report_tracker(pcsx2hook_ctx* ctx, const char* r
  * @brief Takes the capture armed by ::pcsx2hook_gs_arm_capture, as RGBA8.
  * @param out Null to ask for the size.
  * @param frame Receives the GS frame the capture came from. May be null.
- * @return Bytes needed, or 0 if no capture is ready. Caches like ::pcsx2hook_read_framebuffer.
+ * @return Bytes needed, or 0 if no capture is ready. Caches like ::pcsx2hook_gs_read_framebuffer.
  */
 PCSX2HOOK_API size_t pcsx2hook_gs_take_capture(pcsx2hook_ctx* ctx, void* out, size_t size,
 	uint32_t* width, uint32_t* height, uint32_t* frame);
@@ -400,7 +391,7 @@ PCSX2HOOK_API size_t pcsx2hook_gs_take_capture(pcsx2hook_ctx* ctx, void* out, si
  * @param out Null to ask for the size.
  * @return Length needed including the terminator.
  */
-PCSX2HOOK_API size_t pcsx2hook_gs_rows(pcsx2hook_ctx* ctx, uint32_t frame, char* out, size_t size);
+PCSX2HOOK_API size_t pcsx2hook_gs_get_rows(pcsx2hook_ctx* ctx, uint32_t frame, char* out, size_t size);
 
 /**
  * @brief Appends the last complete frame's rows to a file.
@@ -416,10 +407,10 @@ PCSX2HOOK_API size_t pcsx2hook_gs_write_last_frame(pcsx2hook_ctx* ctx, const cha
  * @brief Writes out whatever the armed traces have collected.
  * @note Killing the process loses them, so a run that wants its trace has to reach here.
  */
-PCSX2HOOK_API void pcsx2hook_flush(pcsx2hook_ctx* ctx);
+PCSX2HOOK_API void pcsx2hook_trace_flush(pcsx2hook_ctx* ctx);
 
 /** @brief Why the last call that reported failure failed. Owned by the context. */
-PCSX2HOOK_API const char* pcsx2hook_last_error(pcsx2hook_ctx* ctx);
+PCSX2HOOK_API const char* pcsx2hook_get_last_error(pcsx2hook_ctx* ctx);
 
 #ifdef __cplusplus
 }
