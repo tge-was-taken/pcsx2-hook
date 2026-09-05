@@ -85,7 +85,9 @@ std::vector<std::tuple<uint32_t, int, uint32_t>> loadAutopressScript(const std::
 
 void Core::applyBiosFolders(MemorySettingsInterface& si) {
     if (const char* dir = Config::get().getValue("PCSX2HOOK_BIOSDIR")) {
-        si.SetStringValue("Folders", "Bios", dir);
+        // Absolute: the emulator resolves a relative Folders path against its own data root, not
+        // the working directory the run was started from.
+        si.SetStringValue("Folders", "Bios", std::filesystem::absolute(dir).string().c_str());
     }
     if (const char* file = Config::get().getValue("PCSX2HOOK_BIOS")) {
         si.SetStringValue("Filenames", "BIOS", file);
@@ -129,6 +131,8 @@ void Core::applyHeadlessSettings(MemorySettingsInterface& si) {
     if (Config::get().isSet("PCSX2HOOK_NOFASTMEM")) {
         si.SetBoolValue("EmuCore/CPU/Recompiler", "EnableFastmem", false);
     }
+
+    applyExtraSettings(si);
 }
 
 bool Core::configureBoot(VMBootParameters& params) {

@@ -38,6 +38,8 @@ public:
 
 protected:
     // A host with game-specific work extends the run loop here rather than reimplementing it.
+    // Settings only the host knows about, applied with the rest before the VM starts.
+    virtual void applyExtraSettings(MemorySettingsInterface& si) { (void)si; }
     virtual void onVmReady() {}
     virtual void onFrameExtra(uint32_t frame) { (void)frame; }
     virtual void onShutdown() {}
