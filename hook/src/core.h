@@ -15,6 +15,8 @@ namespace pcsx2hook {
 
 class Core {
 public:
+    virtual ~Core() = default;
+
     // == PadDualshock2::Inputs::LENGTH, asserted in the .cpp. Kept here so the pad state can be a
     // member without pulling the emulator's headers into this one.
     static constexpr int kPadButtonCount = 26;
@@ -29,6 +31,14 @@ public:
     void setPadButton(int bind, bool pressed);
     void setSpeedLimit(bool enabled);
     void requestSaveState();
+
+protected:
+    // A host with game-specific work extends the run loop here rather than reimplementing it.
+    virtual void onVmReady() {}
+    virtual void onFrameExtra(uint32_t frame) { (void)frame; }
+    virtual void onShutdown() {}
+
+    uint32_t getFrameCount() const { return mFrameCount; }
 
 private:
     void applyInputToPad();

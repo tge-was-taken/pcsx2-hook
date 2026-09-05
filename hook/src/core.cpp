@@ -183,6 +183,8 @@ bool Core::run(const VMBootParameters& params) {
     }
     mSaveStateFrame = uint32_t(Config::get().getInt("PCSX2HOOK_SAVESTATE_FRAME", 0));
 
+    onVmReady();
+
     VMManager::SetLimiterMode(Config::get().isSet("PCSX2HOOK_EE_LIMIT")
                                   ? LimiterModeType::Nominal
                                   : LimiterModeType::Unlimited);
@@ -195,6 +197,7 @@ bool Core::run(const VMBootParameters& params) {
         if (st == VMState::Paused) VMManager::SetState(VMState::Running);
     }
 
+    onShutdown();
     diag.getGsDraws().close();
     diag.getGsTracker().report("shutdown");
     diag.getExec().write();
