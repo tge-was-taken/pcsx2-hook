@@ -172,6 +172,15 @@ static void execI()
 #endif
 
 	const u32 pc = cpuRegs.pc;
+#ifdef PCSX2HOOK
+
+	// The same hooks the recompiler trampoline runs, so a hooked function behaves identically under
+	// either CPU. Dispatch reads cpuRegs.pc as the hooked address, so this has to run before the
+	// increment below. Nonzero means skip the body; Dispatch already set pc to $ra.
+	if (Hooks::IsHooked(pc) && Hooks::Dispatch())
+		return;
+
+#endif
 	// We need to increase the pc before executing the memRead32. An exception could appears
 	// and it expects the PC counter to be pre-incremented
 	cpuRegs.pc += 4;
