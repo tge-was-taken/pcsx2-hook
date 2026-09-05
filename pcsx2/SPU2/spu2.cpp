@@ -390,10 +390,9 @@ void SPU2async()
 
 u16 SPU2read(u32 rmem)
 {
-#ifdef PCSX2HOOK
-	Hooks::OnHwAccess(true, rmem, 0, 2, true); // u16 ret = 0xDEAD;
-#else
 	u16 ret = 0xDEAD;
+#ifdef PCSX2HOOK
+	Hooks::OnHwAccess(true, rmem, 0, 2, true);
 #endif
 	u32 core = 0;
 	const u32 mem = rmem & 0xFFFF;

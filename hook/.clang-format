@@ -1,0 +1,13 @@
+# The emulator above this directory follows PCSX2's style; this library follows ps2-runtime's.
+BasedOnStyle: Google
+IndentWidth: 4
+ColumnLimit: 100
+UseTab: Never
+NamespaceIndentation: None
+AccessModifierOffset: -4
+BreakBeforeBraces: Attach
+DerivePointerAlignment: false
+PointerAlignment: Left
+FixNamespaceComments: true
+ShortNamespaceLines: 0
+AllowShortFunctionsOnASingleLine: Inline

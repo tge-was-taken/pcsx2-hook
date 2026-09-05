@@ -180,10 +180,9 @@ __fi void gsWrite32(u32 mem, u32 value)
 
 void gsWrite64_generic( u32 mem, u64 value )
 {
-#ifdef PCSX2HOOK
-	Hooks::OnHwAccess(false, mem, value, 8, false); // GIF_LOG("GS Write64 at %8.8lx with data %8.8x_%8.8x", mem, (u32)(value >> 32), (u32)value);
-#else
 	GIF_LOG("GS Write64 at %8.8lx with data %8.8x_%8.8x", mem, (u32)(value >> 32), (u32)value);
+#ifdef PCSX2HOOK
+	Hooks::OnHwAccess(false, mem, value, 8, false);
 #endif
 
 	std::memcpy(PS2GS_BASE(mem), &value, sizeof(value));
@@ -298,10 +297,9 @@ __fi u16 gsRead16(u32 mem)
 
 __fi u32 gsRead32(u32 mem)
 {
-#ifdef PCSX2HOOK
-	Hooks::OnHwAccess(false, mem, 0, 4, true); // GIF_LOG("GS read 32 from %8.8lx  value: %8.8lx", mem, *(u32*)PS2GS_BASE(mem));
-#else
 	GIF_LOG("GS read 32 from %8.8lx  value: %8.8lx", mem, *(u32*)PS2GS_BASE(mem));
+#ifdef PCSX2HOOK
+	Hooks::OnHwAccess(false, mem, 0, 4, true);
 #endif
 
 	switch (mem & ~0xF)
@@ -315,10 +313,9 @@ __fi u32 gsRead32(u32 mem)
 
 __fi u64 gsRead64(u32 mem)
 {
-#ifdef PCSX2HOOK
-	Hooks::OnHwAccess(false, mem, 0, 8, true); // // fixme - PS2GS_BASE(mem+4) = (g_RealGSMem+(mem + 4 & 0x13ff))
-#else
 	// fixme - PS2GS_BASE(mem+4) = (g_RealGSMem+(mem + 4 & 0x13ff))
+#ifdef PCSX2HOOK
+	Hooks::OnHwAccess(false, mem, 0, 8, true);
 #endif
 	GIF_LOG("GS read 64 from %8.8lx  value: %8.8lx_%8.8lx", mem, *(u32*)PS2GS_BASE(mem+4), *(u32*)PS2GS_BASE(mem) );
 

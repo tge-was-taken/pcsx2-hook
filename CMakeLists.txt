@@ -43,6 +43,8 @@ get_git_version_info()
 write_svnrev_h()
 
 # make common
+option(PCSX2HOOK "Compile the hook and trace taps into the emulator" ON)
+
 add_subdirectory(common)
 
 # make pcsx2
@@ -90,4 +92,10 @@ VERY slow. There is no date for completion yet, you
 should set -DCMAKE_OSX_ARCHITECTURES=x86_64 for now,
 unless you want to work on the recompilers.
 *********************************************************")
+endif()
+
+# The diagnostic library. Off by default so an upstream build is unaffected.
+option(PCSX2HOOK_LIBRARY "Build the pcsx2hook diagnostic library" OFF)
+if(PCSX2HOOK_LIBRARY)
+	add_subdirectory(hook)
 endif()
