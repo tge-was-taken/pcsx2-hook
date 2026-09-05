@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: GPL-3.0+
 
 #include "R3000A.h"
+#ifdef PCSX2HOOK
+#include "Hooks.h"
+#endif
 #include "Common.h"
 #include "Config.h"
 #include "VMManager.h"
@@ -223,12 +226,27 @@ static __fi void execI()
 		}
 	}
 
+#ifdef PCSX2HOOK
+	const u32 hookPc = psxRegs.pc; // captured before the increment below
+#endif
 	psxRegs.code = iopMemRead32(psxRegs.pc);
 
 		PSXCPU_LOG("%s", disR3000AF(psxRegs.code, psxRegs.pc));
 
 	psxRegs.pc+= 4;
 	psxRegs.cycle++;
+#ifdef PCSX2HOOK
+
+	// bracket the instruction so a sink can diff the register file either side of it.
+	if (Hooks::HasIopInsnSink())
+	{
+		const u32 hookCode = psxRegs.code;
+		Hooks::OnIopInsnBefore(hookPc, hookCode);
+		psxBSC[hookCode >> 26]();
+		Hooks::OnIopInsnAfter(hookPc, hookCode);
+		return;
+	}
+#endif
 
 	psxBSC[psxRegs.code >> 26]();
 }

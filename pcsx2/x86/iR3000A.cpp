@@ -4,6 +4,9 @@
 #include "iR3000A.h"
 #include "Host.h"
 #include "R3000A.h"
+#ifdef PCSX2HOOK
+#include "Hooks.h"
+#endif
 #include "BaseblockEx.h"
 #include "R5900OpcodeTables.h"
 #include "IopBios.h"
@@ -711,6 +714,13 @@ static void psxRecompileIrxImport()
 		return;
 
 	const std::string libname = iopMemReadString(import_table + 12, 8);
+#ifdef PCSX2HOOK
+
+	// the import surface as the recompiler links it. This is compile time, so it is the set of
+	// entry points the game references, not a call count; counts come from irxImportExec under the IOP
+	// interpreter. Recorded here because the release build's early-out below skips most imports.
+	Hooks::OnIrxImport(libname.c_str(), index, irxImportFuncname(libname, index));
+#endif
 
 	irxHLE hle = irxImportHLE(libname, index);
 #ifdef PCSX2_DEVBUILD
@@ -1795,6 +1805,15 @@ StartRecomp:
 		}
 	}
 
+#ifdef PCSX2HOOK
+	// IOP coverage, same shape as the EE block counter in iR5900.cpp.
+	{
+		const Hooks::ExecBlockSlots hookBlock = Hooks::IopBlockCounter(startpc, s_nEndBlock);
+		if (hookBlock.count)
+			xADD(ptr64[hookBlock.count], 1);
+	}
+
+#endif
 	g_pCurInstInfo = s_pInstCache;
 	while (!psxbranch && psxpc < s_nEndBlock)
 	{

@@ -6,6 +6,9 @@
 #include "IopBios.h"
 #include "IopMem.h"
 #include "R3000A.h"
+#ifdef PCSX2HOOK
+#include "Hooks.h"
+#endif
 #include "R5900.h"
 #include "ps2/BiosTools.h"
 #include "VMManager.h"
@@ -1430,6 +1433,10 @@ namespace R3000A
 		irxDEBUG debug = irxImportDebug(libname, index);
 
 		irxImportLog(libname, index, funcname);
+#ifdef PCSX2HOOK
+		// the IOP's whole external surface, resolved. Both CPU modes reach here.
+		Hooks::OnIrxImport(libname.c_str(), index, funcname);
+#endif
 
 		if (debug)
 			debug();
