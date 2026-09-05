@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2002-2026 PCSX2 Dev Team
 // SPDX-License-Identifier: GPL-3.0+
 
-#include "pcsx2hook/trace/hw_trace.h"
+#include "trace/hw_trace.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -14,12 +14,12 @@
 
 #include "R3000A.h"
 #include "R5900.h"
-#include "pcsx2hook/config.h"
-#include "pcsx2hook/diagnostics.h"
-#include "pcsx2hook/trace/dump_dir.h"
-#include "pcsx2hook/trace/iop_trace.h"
+#include "config.h"
+#include "diagnostics.h"
+#include "trace/dump_dir.h"
+#include "trace/iop_trace.h"
 #include "pcsx2/Hooks.h"
-#include "pcsx2hook/symbols.h"
+#include "symbols.h"
 
 namespace pcsx2hook {
 constexpr size_t kMaxValues = 8;

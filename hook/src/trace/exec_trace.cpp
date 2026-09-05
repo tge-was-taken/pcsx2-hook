@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2002-2026 PCSX2 Dev Team
 // SPDX-License-Identifier: GPL-3.0+
 
-#include "pcsx2hook/trace/exec_trace.h"
+#include "trace/exec_trace.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -16,12 +16,12 @@
 #include "DebugTools/Debug.h"
 #include "Memory.h"
 #include "R5900.h"
-#include "pcsx2hook/config.h"
-#include "pcsx2hook/diagnostics.h"
-#include "pcsx2hook/trace/dump_dir.h"
+#include "config.h"
+#include "diagnostics.h"
+#include "trace/dump_dir.h"
 #include "pcsx2/Hooks.h"
 #include "ps2/BiosTools.h"
-#include "pcsx2hook/symbols.h"
+#include "symbols.h"
 
 namespace pcsx2hook {
 // A block's counter address is baked into generated code, so the array must never move. One slot

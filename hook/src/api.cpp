@@ -18,12 +18,12 @@
 #include "pcsx2/MTGS.h"
 #include "pcsx2/R5900.h"
 #include "pcsx2/VMManager.h"
-#include "pcsx2hook/config.h"
-#include "pcsx2hook/core.h"
-#include "pcsx2hook/diagnostics.h"
-#include "pcsx2hook/trace/draw_context.h"
-#include "pcsx2hook/host.h"
-#include "pcsx2hook/symbols.h"
+#include "config.h"
+#include "core.h"
+#include "diagnostics.h"
+#include "trace/draw_context.h"
+#include "host.h"
+#include "symbols.h"
 
 using namespace pcsx2hook;
 

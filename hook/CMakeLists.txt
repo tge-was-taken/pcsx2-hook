@@ -21,18 +21,13 @@ add_library(pcsx2hook SHARED
 
 target_include_directories(pcsx2hook
 	PUBLIC include
-	PUBLIC src
-	PRIVATE src/trace
+	PRIVATE src
 	# The "pcsx2/" and "common/" include prefixes the emulator sources use.
 	PRIVATE ${PROJECT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/pcsx2)
 
 set_target_properties(pcsx2hook PROPERTIES
 	CXX_STANDARD 20
 	CXX_STANDARD_REQUIRED ON)
-
-# The emulator's own flags hide every symbol, which is right for it and wrong here: a host that
-# links this in-process uses the C++ classes, not only the C API, so they have to be exported.
-target_compile_options(pcsx2hook PRIVATE -fvisibility=default)
 
 target_compile_definitions(pcsx2hook PRIVATE PCSX2HOOK_BUILDING)
 

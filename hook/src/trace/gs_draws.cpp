@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2002-2026 PCSX2 Dev Team
 // SPDX-License-Identifier: GPL-3.0+
 
-#include "pcsx2hook/trace/gs_draws.h"
+#include "trace/gs_draws.h"
 
 #include <algorithm>
 #include <array>
@@ -15,12 +15,12 @@
 #include <vector>
 
 #include "MTGS.h"
-#include "pcsx2hook/config.h"
-#include "pcsx2hook/diagnostics.h"
-#include "pcsx2hook/trace/draw_context.h"
-#include "pcsx2hook/trace/dump_dir.h"
+#include "config.h"
+#include "diagnostics.h"
+#include "trace/draw_context.h"
+#include "trace/dump_dir.h"
 #include "pcsx2/Hooks.h"
-#include "pcsx2hook/trace/vif_trace.h"
+#include "trace/vif_trace.h"
 
 namespace pcsx2hook {
 void GsDraws::dumpDrawBuffer(const Hooks::GsDraw& d, uint64_t batch, uint32_t frame) {

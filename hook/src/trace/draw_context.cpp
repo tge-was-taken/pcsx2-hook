@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2002-2026 PCSX2 Dev Team
 // SPDX-License-Identifier: GPL-3.0+
 
-#include "pcsx2hook/trace/draw_context.h"
+#include "trace/draw_context.h"
 
 #include <algorithm>
 #include <array>
@@ -19,9 +19,9 @@
 
 #include "DebugTools/Debug.h"  // disVU1MicroUF/LF: PCSX2's VU1 disassembler
 #include "VUmicro.h"           // vuRegs[1].Micro: the resident VU1 microprogram image
-#include "pcsx2hook/config.h"
-#include "pcsx2hook/diagnostics.h"
-#include "pcsx2hook/trace/dump_dir.h"
+#include "config.h"
+#include "diagnostics.h"
+#include "trace/dump_dir.h"
 
 namespace pcsx2hook {
 size_t s_depth = 0;

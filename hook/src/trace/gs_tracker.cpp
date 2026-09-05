@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2002-2026 PCSX2 Dev Team
 // SPDX-License-Identifier: GPL-3.0+
 
-#include "pcsx2hook/trace/gs_tracker.h"
+#include "trace/gs_tracker.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -11,11 +11,11 @@
 #include <unordered_map>
 #include <vector>
 
-#include "pcsx2hook/config.h"
-#include "pcsx2hook/diagnostics.h"
+#include "config.h"
+#include "diagnostics.h"
 #include "pcsx2/Hooks.h"
 #include "pcsx2/R5900.h"
-#include "pcsx2hook/symbols.h"
+#include "symbols.h"
 
 namespace pcsx2hook {
 namespace {

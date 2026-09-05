@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2002-2026 PCSX2 Dev Team
 // SPDX-License-Identifier: GPL-3.0+
 
-#include "pcsx2hook/trace/insn_trace.h"
+#include "trace/insn_trace.h"
 
 #include <algorithm>
 #include <chrono>
@@ -20,11 +20,11 @@
 #include "R5900OpcodeTables.h"
 #include "VU.h"
 #include "VUmicro.h"
-#include "pcsx2hook/config.h"
-#include "pcsx2hook/diagnostics.h"
-#include "pcsx2hook/trace/dump_dir.h"
+#include "config.h"
+#include "diagnostics.h"
+#include "trace/dump_dir.h"
 #include "pcsx2/Hooks.h"
-#include "pcsx2hook/symbols.h"
+#include "symbols.h"
 
 namespace pcsx2hook {
 
