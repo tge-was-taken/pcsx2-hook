@@ -156,21 +156,13 @@ PCSX2HOOK_API size_t pcsx2hook_read_framebuffer(pcsx2hook_ctx* ctx, void* out, s
 // One GS draw batch's resolved register state, in submission order for the last complete frame.
 PCSX2HOOK_API size_t pcsx2hook_gs_rows(pcsx2hook_ctx* ctx, uint32_t frame, char* out, size_t size);
 
-// Which pipeline is drawing, so a GS batch can be attributed to the draw that produced it. Mirrors
-// the tracer's own kinds.
-typedef enum
-{
-	PCSX2HOOK_DRAW_NONE = 0,
-	PCSX2HOOK_DRAW_ATOMIC,
-	PCSX2HOOK_DRAW_SECTOR,
-	PCSX2HOOK_DRAW_PTANK,
-	PCSX2HOOK_DRAW_IM2D,
-	PCSX2HOOK_DRAW_IM3D,
-	PCSX2HOOK_DRAW_RT2D
-} pcsx2hook_draw_kind;
-
-PCSX2HOOK_API void pcsx2hook_push_draw(pcsx2hook_ctx* ctx, pcsx2hook_draw_kind kind,
-	uint32_t object, uint32_t pipeline);
+// Names the draw the host is inside, so traced work can be attributed to it. The label is the
+// host's own word for what it is drawing, truncated past 31 characters; the library has no model of
+// a renderer, so it never interprets one. Attribution only reaches work the guest does while the
+// draw is open: an engine that queues its packets and kicks the DMA chain once per frame does most
+// of its GS and VU work after the draw has been popped.
+PCSX2HOOK_API void pcsx2hook_push_draw(pcsx2hook_ctx* ctx, const char* label, uint32_t object,
+	uint32_t pipeline);
 PCSX2HOOK_API void pcsx2hook_pop_draw(pcsx2hook_ctx* ctx);
 
 // Any of the library's own settings, by the name the environment would use.

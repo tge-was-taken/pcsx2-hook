@@ -14,25 +14,15 @@
 
 namespace pcsx2hook {
 
-enum class DrawKind : uint8_t {
-    None,
-    Atomic,
-    Sector,
-    PTank,
-    Im2D,
-    Im3D,
-    Rt2d,
-};
+// The label is the host's own word for what it is drawing, since the library has no model of a
+// renderer to name one for it.
 struct DrawContext {
-    DrawKind kind = DrawKind::None;
+    static constexpr size_t kMaxLabel = 32;
+    char label[kMaxLabel] = {};
     uint32_t object = 0;
-    uint32_t material = 0;
     uint32_t pipeline = 0;
-    uint32_t vuAddr = 0;
-    uint32_t vuWords = 0;
-    uint64_t vuHash = 0;
-    uint32_t uploads = 0;
 };
+
 struct StreamPos {
     uint32_t frame = 0;
     uint32_t batch = 0;
@@ -52,7 +42,7 @@ public:
         uint32_t words = 0;
         uint32_t uploads = 0;
         std::vector<uint32_t> code;
-        std::map<uint8_t, uint32_t> kinds;
+        std::map<std::string, uint32_t> labels;
         std::vector<StreamPos> at;
         std::set<uint32_t> getEntries;
     };
@@ -92,8 +82,7 @@ public:
 
     void push(const DrawContext& ctx);
     void pop();
-    DrawContext* getCurrent();
-    const DrawContext& getLastPopped();
+    const char* getCurrentLabel();
     bool isVuTraceEnabled();
     uint64_t resolveProgramAt(uint32_t pc);
     void setRunningProgramGs(uint64_t hash, StreamPos at);
@@ -117,16 +106,13 @@ public:
     void writeVuExecTrace();
 
 private:
-    void seedMicroFromVu();
     void writeVuImages();
 
     DrawContext mStack[kMaxDepth];
-    DrawContext mLastPopped;
     std::map<uint64_t, Program> mPrograms;
     std::vector<uint32_t> mMicro = std::vector<uint32_t>(kVu1Words, 0);
     std::set<uint32_t> mUploadStarts;
     std::map<uint64_t, MicroImage> mImages;
-    bool mMicroSeeded = false;
     uint32_t mLastUploadEnd = 0xFFFFFFFFu;
     std::mutex mMutex;
     uint64_t mRunning = 0;

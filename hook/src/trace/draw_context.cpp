@@ -18,20 +18,12 @@
 #include <vector>
 
 #include "DebugTools/Debug.h"  // disVU1MicroUF/LF: PCSX2's VU1 disassembler
-#include "VUmicro.h"           // vuRegs[1].Micro: the resident VU1 microprogram image
 #include "config.h"
 #include "diagnostics.h"
 #include "trace/dump_dir.h"
 
 namespace pcsx2hook {
 size_t s_depth = 0;
-void DrawTrace::seedMicroFromVu() {
-    if (mMicroSeeded) {
-        return;
-    }
-    mMicroSeeded = true;
-}
-
 size_t s_execTotalSteps = 0;
 uint64_t hashWords(const uint32_t* words, uint32_t count) {
     uint64_t h = 0xCBF29CE484222325ull;
@@ -44,24 +36,6 @@ uint64_t hashWords(const uint32_t* words, uint32_t count) {
     return h;
 }
 
-const char* getKindName(DrawKind k) {
-    switch (k) {
-        case DrawKind::Atomic:
-            return "atomic";
-        case DrawKind::Sector:
-            return "sector";
-        case DrawKind::PTank:
-            return "ptank";
-        case DrawKind::Im2D:
-            return "im2d";
-        case DrawKind::Im3D:
-            return "im3d";
-        case DrawKind::Rt2d:
-            return "rt2d";
-        default:
-            return "none";
-    }
-}
 void DrawTrace::push(const DrawContext& ctx) {
     if (s_depth < kMaxDepth) {
         mStack[s_depth] = ctx;
@@ -69,19 +43,12 @@ void DrawTrace::push(const DrawContext& ctx) {
     s_depth++;
 }
 void DrawTrace::pop() {
-    if (s_depth == 0) {
-        return;
-    }
-    s_depth--;
-    if (s_depth < kMaxDepth) {
-        mLastPopped = mStack[s_depth];
+    if (s_depth > 0) {
+        s_depth--;
     }
 }
-DrawContext* DrawTrace::getCurrent() {
-    return (s_depth > 0 && s_depth <= kMaxDepth) ? &mStack[s_depth - 1] : nullptr;
-}
-const DrawContext& DrawTrace::getLastPopped() {
-    return mLastPopped;
+const char* DrawTrace::getCurrentLabel() {
+    return (s_depth > 0 && s_depth <= kMaxDepth) ? mStack[s_depth - 1].label : "";
 }
 bool DrawTrace::isVuTraceEnabled() {
     static const bool on = Config::get().getValue("PCSX2HOOK_VU_TRACE") != nullptr;
@@ -96,7 +63,6 @@ void DrawTrace::onVu1Upload(uint32_t addr, const uint32_t* words, uint32_t count
     // handling does. Chunks are merged rather than recorded: one MPG is as much of a program as
     // fit in that VIF packet, so a chunk is not a program and its length is not the length.
     const std::lock_guard<std::mutex> lock(mMutex);
-    seedMicroFromVu();
     const uint32_t start = (addr / 8) % kVu1Instrs;
     if (start != mLastUploadEnd) {
         mUploadStarts.insert(start);
@@ -111,7 +77,6 @@ uint64_t DrawTrace::resolveProgramAt(uint32_t pc) {
         return mRunning;
     }
     const std::lock_guard<std::mutex> lock(mMutex);
-    seedMicroFromVu();
     constexpr uint32_t kEBit = 1u << 30;
     auto next = mUploadStarts.upper_bound(pc);
     const uint32_t limit = (next == mUploadStarts.end()) ? kVu1Instrs : *next;
@@ -132,6 +97,9 @@ uint64_t DrawTrace::resolveProgramAt(uint32_t pc) {
         p.code.assign(mMicro.begin() + pc * 2, mMicro.begin() + pc * 2 + words);
     }
     p.getEntries.insert(pc);
+    if (const char* label = getCurrentLabel(); *label) {
+        p.labels[label]++;
+    }
 
     const uint64_t imageHash = hashWords(mMicro.data(), kVu1Words);
     MicroImage& img = mImages[imageHash];
@@ -253,11 +221,9 @@ void DrawTrace::writeVuTrace() {
     }
     std::fprintf(f, "\n");
     for (const auto& [hash, p] : mPrograms) {
-        std::string kinds;
-        for (const auto& [k, n] : p.kinds) {
-            kinds += (kinds.empty() ? "" : ", ");
-            kinds += getKindName(static_cast<DrawKind>(k));
-            kinds += ":" + std::to_string(n);
+        std::string labels;
+        for (const auto& [label, n] : p.labels) {
+            labels += (labels.empty() ? "" : ", ") + label + ":" + std::to_string(n);
         }
         std::string where;
         for (const StreamPos& sp : p.at) {
@@ -266,7 +232,7 @@ void DrawTrace::writeVuTrace() {
         }
         std::fprintf(f, "program %016llX  addr=0x%04X words=%u instrs=%u uploads=%u  under %s\n",
                      static_cast<unsigned long long>(hash), p.addr, p.words, p.words / 2, p.uploads,
-                     kinds.c_str());
+                     labels.empty() ? "-" : labels.c_str());
         std::fprintf(f, "  ran before: %s\n", where.c_str());
         for (size_t i = 0; i + 1 < p.code.size(); i += 2) {
             const uint32_t pc = static_cast<uint32_t>(p.addr / 8 + i / 2);

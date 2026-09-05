@@ -336,11 +336,13 @@ size_t pcsx2hook_gs_rows(pcsx2hook_ctx* ctx, uint32_t frame, char* out, size_t s
     return rows.size() + 1;
 }
 
-void pcsx2hook_push_draw(pcsx2hook_ctx* ctx, pcsx2hook_draw_kind kind, uint32_t object,
+void pcsx2hook_push_draw(pcsx2hook_ctx* ctx, const char* label, uint32_t object,
                          uint32_t pipeline) {
     if (!ctx) return;
     DrawContext c;
-    c.kind = static_cast<DrawKind>(kind);
+    if (label) {
+        std::snprintf(c.label, sizeof(c.label), "%s", label);
+    }
     c.object = object;
     c.pipeline = pipeline;
     Diagnostics::get().getDraws().push(c);
