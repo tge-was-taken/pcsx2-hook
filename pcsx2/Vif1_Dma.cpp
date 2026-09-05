@@ -149,6 +149,11 @@ __fi void vif1SetupTransfer()
 	vif1ch.madr = ptag[1]._u32; //MADR = ADDR field + SPR
 	g_vif1Cycles += 1; // Add 1 g_vifCycles from the QW read for the tag
 	vif1.inprogress &= ~1;
+#ifdef PCSX2HOOK
+
+	// ground truth for the tag chain a transfer actually follows.
+	Hooks::OnVifTag(vif1ch.tadr, ptag->ID, vif1ch.madr, vif1ch.qwc);
+#endif
 
 	VIF_LOG("VIF1 Tag %8.8x_%8.8x size=%d, id=%d, madr=%lx, tadr=%lx",
 		ptag[1]._u32, ptag[0]._u32, vif1ch.qwc, ptag->ID, vif1ch.madr, vif1ch.tadr);

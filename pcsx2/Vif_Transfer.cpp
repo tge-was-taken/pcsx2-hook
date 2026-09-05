@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: GPL-3.0+
 
 #include "Common.h"
+#ifdef PCSX2HOOK
+#include "Hooks.h"
+#endif
 #include "Vif_Dma.h"
 #include "Vif_Dynarec.h"
 
@@ -34,6 +37,11 @@ _vifT void vifTransferLoop(u32* &data) {
 
 			vifXRegs.code = data[0];
 			vifX.cmd	  = data[0] >> 24;
+#ifdef PCSX2HOOK
+
+			// the exact code word (CMD/NUM/IMM), in processed order.
+			Hooks::OnVifCode(idx, data[0]);
+#endif
 
 
 			VIF_LOG("New VifCMD %x tagsize %x irq %d", vifX.cmd, vifX.tag.size, vifX.irq);
