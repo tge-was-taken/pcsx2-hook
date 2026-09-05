@@ -107,6 +107,14 @@ PCSX2HOOK_API void pcsx2hook_add_string_list(pcsx2hook_ctx* ctx, const char* sec
 PCSX2HOOK_API int pcsx2hook_register(pcsx2hook_ctx* ctx, uint32_t addr, pcsx2hook_pre_fn pre,
 	pcsx2hook_post_fn post, void* user);
 
+// A `jr $ra; nop` stub in unused guest RAM that post-hooked calls return through, and a second one
+// that pcsx2hook_call_ee returns through. Post-handlers and guest calls do nothing until these are set.
+PCSX2HOOK_API void pcsx2hook_set_return_sentinel(pcsx2hook_ctx* ctx, uint32_t addr);
+PCSX2HOOK_API void pcsx2hook_set_call_marker(pcsx2hook_ctx* ctx, uint32_t addr);
+
+// Runs for every hooked call before its handler, for a host recording the whole stream.
+PCSX2HOOK_API void pcsx2hook_set_observer(pcsx2hook_ctx* ctx, pcsx2hook_post_fn fn, void* user);
+
 // Runs a guest function to completion from inside a handler and returns $v0. Non-blocking functions
 // only: EE interrupts are masked for the duration.
 PCSX2HOOK_API uint32_t pcsx2hook_call_ee(pcsx2hook_ctx* ctx, uint32_t pc, const uint32_t* args,

@@ -47,6 +47,14 @@ Hooks::Result preThunk(Hooks::Context& ctx) {
                                                                    : Hooks::Result::Continue;
 }
 
+HostHandler s_observer{};
+
+void observerThunk(Hooks::Context& ctx) {
+    if (!s_observer.post) return;
+    pcsx2hook_regs view = viewOf(ctx);
+    s_observer.post(&view, s_observer.user);
+}
+
 void postThunk(Hooks::Context& ctx) {
     const auto it = s_handlers.find(ctx.pc);
     if (it == s_handlers.end() || !it->second.post) return;
@@ -219,6 +227,20 @@ int pcsx2hook_register(pcsx2hook_ctx* ctx, uint32_t addr, pcsx2hook_pre_fn pre,
     s_handlers[addr] = HostHandler{pre, post, user};
     Hooks::Register(addr, pre ? &preThunk : nullptr, post ? &postThunk : nullptr);
     return 1;
+}
+
+void pcsx2hook_set_return_sentinel(pcsx2hook_ctx* ctx, uint32_t addr) {
+    if (ctx) Hooks::SetReturnSentinel(addr);
+}
+
+void pcsx2hook_set_call_marker(pcsx2hook_ctx* ctx, uint32_t addr) {
+    if (ctx) Hooks::SetCallMarker(addr);
+}
+
+void pcsx2hook_set_observer(pcsx2hook_ctx* ctx, pcsx2hook_post_fn fn, void* user) {
+    if (!ctx) return;
+    s_observer = HostHandler{nullptr, fn, user};
+    Hooks::SetObserver(fn ? &observerThunk : nullptr);
 }
 
 uint32_t pcsx2hook_call_ee(pcsx2hook_ctx* ctx, uint32_t pc, const uint32_t* args, size_t count) {
