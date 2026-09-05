@@ -251,6 +251,9 @@ void Core::onFrame() {
     // Written at shutdown, so a run that wants its trace has to reach the end rather than be
     // killed.
     if (Diagnostics::get().getExec().finish(mFrameCount)) {
+        // Widens the mined forms with edge operands. Destroys guest state, so it runs at the end of
+        // the session rather than alongside the game.
+        Diagnostics::get().getInsn().runSynth();
         VMManager::SetState(VMState::Stopping);
     }
 }
