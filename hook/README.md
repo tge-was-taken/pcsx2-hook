@@ -80,7 +80,7 @@ replacing it.
 
 The emulator fork is complete and is what a working port builds against today.
 
-The library builds and links: `libpcsx2hook.so`, exporting all thirteen `pcsx2hook_*` entry points,
+The library builds and links: `libpcsx2hook.so`, exporting all 47 `pcsx2hook_*` entry points,
 with nothing unresolved at load. One `pcsx2hook` namespace, a class per module owned by
 `Diagnostics`, every environment read behind `Config`, and a C API in `pcsx2hook.h`.
 
