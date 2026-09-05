@@ -252,7 +252,7 @@ if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
 endif()
 
 if (USE_PGO_GENERATE OR USE_PGO_OPTIMIZE)
-	add_compile_options("-fprofile-dir=${CMAKE_SOURCE_DIR}/profile")
+	add_compile_options("-fprofile-dir=${PROJECT_SOURCE_DIR}/profile")
 endif()
 
 if (USE_PGO_GENERATE)
