@@ -163,7 +163,8 @@ bool Core::run(const VMBootParameters& params) {
         return false;
     }
 
-    getSymbols().setSerial(VMManager::GetDiscSerial());
+    mDiscSerial = VMManager::GetDiscSerial();
+    getSymbols().setSerial(mDiscSerial);
 
     Diagnostics& diag = Diagnostics::get();
     // Before the recompiler compiles anything, so the block counters exist when it asks for them.

@@ -4,6 +4,7 @@
 #pragma once
 
 #include <atomic>
+#include <string>
 #include <cstdint>
 #include <tuple>
 #include <vector>
@@ -46,9 +47,13 @@ protected:
 
     uint32_t getFrameCount() const { return mFrameCount; }
 
+    // Read once at startup: the emulator's own accessor is not stable for the whole run.
+    const std::string& getDiscSerial() const { return mDiscSerial; }
+
 private:
     void applyInputToPad();
 
+    std::string mDiscSerial;
     uint32_t mFrameCount = 0;
     bool mAutopress = false;
     std::vector<int> mAutopressButtons;
