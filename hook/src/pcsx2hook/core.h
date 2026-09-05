@@ -33,6 +33,11 @@ public:
     void setSpeedLimit(bool enabled);
     void requestSaveState();
 
+    uint32_t getFrameCount() const { return mFrameCount; }
+
+    // Read once at startup: the emulator's own accessor is not stable for the whole run.
+    const std::string& getDiscSerial() const { return mDiscSerial; }
+
     // A host with a renderer of its own binds these; the library has nothing to capture.
     virtual void requestCapture() {}
     virtual void requestRecord() {}
@@ -45,10 +50,7 @@ protected:
     virtual void onFrameExtra(uint32_t frame) { (void)frame; }
     virtual void onShutdown() {}
 
-    uint32_t getFrameCount() const { return mFrameCount; }
 
-    // Read once at startup: the emulator's own accessor is not stable for the whole run.
-    const std::string& getDiscSerial() const { return mDiscSerial; }
 
 private:
     void applyInputToPad();

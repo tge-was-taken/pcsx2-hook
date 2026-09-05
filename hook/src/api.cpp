@@ -3,19 +3,24 @@
 
 #include "pcsx2hook/pcsx2hook.h"
 
+#include <atomic>
 #include <cstring>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
+#include "Memory.h"
 #include "common/Error.h"
+#include "common/MemorySettingsInterface.h"
+#include "pcsx2/Hooks.h"
+#include "pcsx2/MTGS.h"
+#include "pcsx2/R5900.h"
+#include "pcsx2/VMManager.h"
 #include "pcsx2hook/config.h"
 #include "pcsx2hook/core.h"
 #include "pcsx2hook/diagnostics.h"
-#include "pcsx2/Hooks.h"
-#include "pcsx2/MTGS.h"
-#include "pcsx2/VMManager.h"
-#include "Memory.h"
+#include "pcsx2hook/host.h"
 #include "pcsx2hook/symbols.h"
 
 using namespace pcsx2hook;
@@ -68,10 +73,42 @@ const char* traceVariable(pcsx2hook_trace which) {
 
 }  // namespace
 
+// Forwards the run loop's extension points to the host's C callbacks.
 struct pcsx2hook_ctx {
-    Core core;
+    class HostCore : public Core {
+    public:
+        explicit HostCore(pcsx2hook_ctx& owner) : mOwner(owner) {}
+
+    protected:
+        void applyExtraSettings(MemorySettingsInterface& si) override {
+            mOwner.settings = &si;
+            if (mOwner.config.on_settings) mOwner.config.on_settings(mOwner.config.user);
+            mOwner.settings = nullptr;
+        }
+        void onVmReady() override {
+            if (mOwner.config.on_vm_ready) mOwner.config.on_vm_ready(mOwner.config.user);
+        }
+        void onFrameExtra(uint32_t frame) override {
+            if (mOwner.config.on_frame) mOwner.config.on_frame(frame, mOwner.config.user);
+        }
+        void onShutdown() override {
+            if (mOwner.config.on_shutdown) mOwner.config.on_shutdown(mOwner.config.user);
+        }
+
+    private:
+        pcsx2hook_ctx& mOwner;
+    };
+
+    pcsx2hook_ctx() : core(*this) {}
+
+    pcsx2hook_config config{};
+    HostCore core;
+    Pcsx2Host host;
+    MemorySettingsInterface* settings = nullptr;
+    std::thread cpu;
+    std::atomic<int> exitCode{1};
     std::string error;
-    bool booted = false;
+    std::string serial;
 };
 
 extern "C" {
@@ -79,6 +116,7 @@ extern "C" {
 pcsx2hook_ctx* pcsx2hook_create(const pcsx2hook_config* config) {
     if (!config) return nullptr;
     auto* ctx = new pcsx2hook_ctx();
+    ctx->config = *config;
     Config& cfg = Config::get();
     if (config->bios_dir) cfg.set("PCSX2HOOK_BIOSDIR", config->bios_dir);
     if (config->bios_file) cfg.set("PCSX2HOOK_BIOS", config->bios_file);
@@ -86,6 +124,7 @@ pcsx2hook_ctx* pcsx2hook_create(const pcsx2hook_config* config) {
     if (config->symbols) cfg.set("PCSX2HOOK_SYMBOLS", config->symbols);
     if (config->interpreter) cfg.set("PCSX2HOOK_INTERP", "1");
     if (!config->software_gs) cfg.set("PCSX2HOOK_NULLGS", "1");
+    ctx->host.setCore(ctx->core);
     return ctx;
 }
 
@@ -100,12 +139,78 @@ int pcsx2hook_arm(pcsx2hook_ctx* ctx, pcsx2hook_trace which) {
         ctx->error = "unknown trace";
         return 0;
     }
-    if (ctx->booted) {
-        ctx->error = "traces arm before boot: they hook code the recompiler has already compiled";
-        return 0;
-    }
     Config::get().set(name, "1");
     return 1;
+}
+
+void pcsx2hook_early_init(pcsx2hook_ctx* ctx) {
+    if (ctx) ctx->host.earlyInit();
+}
+
+int pcsx2hook_init(pcsx2hook_ctx* ctx, int argc, char** argv) {
+    return ctx && ctx->host.init(argc, argv) ? 1 : 0;
+}
+
+int pcsx2hook_window_requested(pcsx2hook_ctx* ctx) {
+    return ctx && ctx->host.windowRequested() ? 1 : 0;
+}
+
+int pcsx2hook_create_dev_window(pcsx2hook_ctx* ctx) {
+    return ctx && ctx->host.createDevWindow() ? 1 : 0;
+}
+
+void pcsx2hook_apply_settings_override(pcsx2hook_ctx* ctx) {
+    if (ctx) ctx->host.applySettingsOverride();
+}
+
+int pcsx2hook_start(pcsx2hook_ctx* ctx) {
+    if (!ctx) return 0;
+    ctx->cpu = ctx->host.startCpuThread(ctx->exitCode);
+    return 1;
+}
+
+int pcsx2hook_finished(pcsx2hook_ctx* ctx) {
+    return ctx && ctx->host.emulationFinished() ? 1 : 0;
+}
+
+void pcsx2hook_pump_dev_window(pcsx2hook_ctx* ctx, int forever) {
+    if (ctx) ctx->host.pumpDevWindow(forever != 0);
+}
+
+void pcsx2hook_request_stop(pcsx2hook_ctx* ctx) {
+    if (ctx) ctx->host.requestStop();
+}
+
+int pcsx2hook_join(pcsx2hook_ctx* ctx) {
+    if (!ctx) return 1;
+    if (ctx->cpu.joinable()) ctx->cpu.join();
+    return ctx->exitCode.load();
+}
+
+void pcsx2hook_shutdown(pcsx2hook_ctx* ctx) {
+    if (ctx) ctx->host.shutdown();
+}
+
+void pcsx2hook_set_pad_button(pcsx2hook_ctx* ctx, int bind, int pressed) {
+    if (ctx) ctx->core.setPadButton(bind, pressed != 0);
+}
+
+void pcsx2hook_set_speed_limit(pcsx2hook_ctx* ctx, int enabled) {
+    if (ctx) ctx->core.setSpeedLimit(enabled != 0);
+}
+
+void pcsx2hook_set_string(pcsx2hook_ctx* ctx, const char* section, const char* key,
+                          const char* value) {
+    if (ctx && ctx->settings) ctx->settings->SetStringValue(section, key, value);
+}
+
+void pcsx2hook_set_bool(pcsx2hook_ctx* ctx, const char* section, const char* key, int value) {
+    if (ctx && ctx->settings) ctx->settings->SetBoolValue(section, key, value != 0);
+}
+
+void pcsx2hook_add_string_list(pcsx2hook_ctx* ctx, const char* section, const char* key,
+                               const char* value) {
+    if (ctx && ctx->settings) ctx->settings->AddToStringList(section, key, value);
 }
 
 int pcsx2hook_register(pcsx2hook_ctx* ctx, uint32_t addr, pcsx2hook_pre_fn pre,
@@ -118,14 +223,12 @@ int pcsx2hook_register(pcsx2hook_ctx* ctx, uint32_t addr, pcsx2hook_pre_fn pre,
 
 uint32_t pcsx2hook_call_ee(pcsx2hook_ctx* ctx, uint32_t pc, const uint32_t* args, size_t count) {
     if (!ctx) return 0;
-    std::initializer_list<uint32_t> empty{};
-    if (!args || count == 0) return Hooks::CallEE(pc, empty, {});
-    std::vector<uint32_t> gpr(args, args + count);
-    switch (gpr.size()) {
-        case 1: return Hooks::CallEE(pc, {gpr[0]}, {});
-        case 2: return Hooks::CallEE(pc, {gpr[0], gpr[1]}, {});
-        case 3: return Hooks::CallEE(pc, {gpr[0], gpr[1], gpr[2]}, {});
-        default: return Hooks::CallEE(pc, {gpr[0], gpr[1], gpr[2], gpr[3]}, {});
+    if (!args || count == 0) return Hooks::CallEE(pc, {}, {});
+    switch (count) {
+        case 1: return Hooks::CallEE(pc, {args[0]}, {});
+        case 2: return Hooks::CallEE(pc, {args[0], args[1]}, {});
+        case 3: return Hooks::CallEE(pc, {args[0], args[1], args[2]}, {});
+        default: return Hooks::CallEE(pc, {args[0], args[1], args[2], args[3]}, {});
     }
 }
 
@@ -135,17 +238,20 @@ void* pcsx2hook_guest(pcsx2hook_ctx* ctx, uint32_t addr, uint32_t size) {
     return PSM(addr);
 }
 
-int pcsx2hook_boot(pcsx2hook_ctx* ctx) {
-    if (!ctx) return 0;
-    ctx->error = "boot is driven by the host: build VMBootParameters and call Core::run";
-    return 0;
+void* pcsx2hook_ram_base(pcsx2hook_ctx* ctx, uint32_t* size) {
+    if (!ctx || !eeMem) return nullptr;
+    if (size) *size = Ps2MemSize::MainRam;
+    return eeMem->Main;
 }
 
-int pcsx2hook_run_frames(pcsx2hook_ctx* ctx, uint32_t frames) {
-    if (!ctx) return 0;
-    (void)frames;
-    ctx->error = "frame stepping needs the run loop to yield, which Core::run does not do yet";
-    return 0;
+uint32_t pcsx2hook_ee_pc(pcsx2hook_ctx* ctx) {
+    return ctx ? cpuRegs.pc : 0;
+}
+
+const char* pcsx2hook_disc_serial(pcsx2hook_ctx* ctx) {
+    if (!ctx) return "";
+    ctx->serial = ctx->core.getDiscSerial();
+    return ctx->serial.c_str();
 }
 
 int pcsx2hook_load_state(pcsx2hook_ctx* ctx, const char* path) {
@@ -164,6 +270,12 @@ int pcsx2hook_save_state(pcsx2hook_ctx* ctx, const char* path) {
     return 1;
 }
 
+void pcsx2hook_run_on_gs_thread(pcsx2hook_ctx* ctx, pcsx2hook_void_fn fn, void* user) {
+    if (!ctx || !fn) return;
+    MTGS::RunOnGSThread([fn, user]() { fn(user); });
+    MTGS::WaitGS(false, false, false);
+}
+
 size_t pcsx2hook_read_framebuffer(pcsx2hook_ctx* ctx, void* out, size_t size, uint32_t* width,
                                   uint32_t* height) {
     if (!ctx) return 0;
@@ -178,6 +290,13 @@ size_t pcsx2hook_read_framebuffer(pcsx2hook_ctx* ctx, void* out, size_t size, ui
     const size_t needed = pixels.size() * sizeof(uint32_t);
     if (out && size >= needed) std::memcpy(out, pixels.data(), needed);
     return needed;
+}
+
+size_t pcsx2hook_gs_rows(pcsx2hook_ctx* ctx, uint32_t frame, char* out, size_t size) {
+    if (!ctx) return 0;
+    const std::string rows = Diagnostics::get().getGsDraws().getRowsForFrame(frame);
+    if (out && size >= rows.size() + 1) std::memcpy(out, rows.c_str(), rows.size() + 1);
+    return rows.size() + 1;
 }
 
 void pcsx2hook_flush(pcsx2hook_ctx* ctx) {
