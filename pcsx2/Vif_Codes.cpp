@@ -7,6 +7,9 @@
 #include "MTVU.h"
 #include "VUmicro.h"
 #include "Vif_Dma.h"
+#ifdef PCSX2HOOK
+#include "Hooks.h"
+#endif
 #include "Vif_Dynarec.h"
 
 #define vifOp(vifCodeName) _vifT int vifCodeName(int pass, const u32* data)
@@ -113,6 +116,13 @@ static __fi void vuExecMicro(int idx, u32 addr, bool requires_wait)
 		GetVifX.queued_pc = addr;
 	else
 		GetVifX.queued_pc = addr & (idx ? 0x7ffu : 0x1ffu);
+#ifdef PCSX2HOOK
+	// which microprogram the batches after this one ran under. The upload address alone does
+	// not say it, because several programs are resident at once and this picks the entry point.
+	// MSCNT passes -1 to continue from the current PC, which names no program.
+	if (idx && static_cast<s32>(addr) != -1)
+		Hooks::OnVu1Exec(GetVifX.queued_pc, VU1.Mem, VU1_MEMSIZE);
+#endif
 	GetVifX.unpackcalls = 0;
 
 	GetVifX.queued_gif_wait = requires_wait;
@@ -313,6 +323,13 @@ static __fi void _vifCode_MPG(int idx, u32 addr, const u32* data, int size)
 	vifStruct& vifX = GetVifX;
 	const u16 vuMemSize = idx ? 0x4000 : 0x1000;
 	pxAssert(VUx.Micro);
+#ifdef PCSX2HOOK
+
+	// report VU1 microprogram uploads. Taken here rather than at the WriteMicroMem calls
+	// below so it fires once per MPG whichever path the transfer takes.
+	if (idx)
+		Hooks::OnVu1Upload(addr, data, static_cast<u32>(size));
+#endif
 
 	vifExecQueue(idx);
 
