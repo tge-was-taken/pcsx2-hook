@@ -18,6 +18,9 @@
 
 #include "Common.h"
 #include "vtlb.h"
+#ifdef PCSX2HOOK
+#include "Hooks.h"
+#endif
 #include "COP0.h"
 #include "Cache.h"
 #include "IopMem.h"
@@ -162,7 +165,11 @@ __inline int CheckCache(u32 addr)
 // See recVTLB.cpp for the dynarec versions.
 
 template <typename DataType>
+#ifdef PCSX2HOOK
+static DataType hookVtlbRead(u32 addr)
+#else
 DataType vtlb_memRead(u32 addr)
+#endif
 {
 	static const uint DataSize = sizeof(DataType) * 8;
 	auto vmv = vtlbdata.vmap[addr >> VTLB_PAGE_BITS];
@@ -218,7 +225,11 @@ DataType vtlb_memRead(u32 addr)
 	return 0; // technically unreachable, but suppresses warnings.
 }
 
+#ifdef PCSX2HOOK
+static RETURNS_R128 hookVtlbRead128(u32 mem)
+#else
 RETURNS_R128 vtlb_memRead128(u32 mem)
+#endif
 {
 	auto vmv = vtlbdata.vmap[mem >> VTLB_PAGE_BITS];
 
@@ -244,7 +255,11 @@ RETURNS_R128 vtlb_memRead128(u32 mem)
 }
 
 template <typename DataType>
+#ifdef PCSX2HOOK
+static void hookVtlbWrite(u32 addr, DataType data)
+#else
 void vtlb_memWrite(u32 addr, DataType data)
+#endif
 {
 	static const uint DataSize = sizeof(DataType) * 8;
 
@@ -285,7 +300,11 @@ void vtlb_memWrite(u32 addr, DataType data)
 	}
 }
 
+#ifdef PCSX2HOOK
+static void TAKES_R128 hookVtlbWrite128(u32 mem, r128 value)
+#else
 void TAKES_R128 vtlb_memWrite128(u32 mem, r128 value)
+#endif
 {
 	auto vmv = vtlbdata.vmap[mem >> VTLB_PAGE_BITS];
 
@@ -311,6 +330,45 @@ void TAKES_R128 vtlb_memWrite128(u32 mem, r128 value)
 
 		vmv.assumeHandler<128, true>()(paddr, value);
 	}
+#ifdef PCSX2HOOK
+}
+
+// one tap per direction, wrapping every return path of the two implementations above. Hooking
+// here rather than deriving the address from the instruction encoding is what makes device and
+// unaligned accesses recordable at all: this is the real address, size and value.
+template <typename DataType>
+DataType vtlb_memRead(u32 addr)
+{
+	const DataType value = hookVtlbRead<DataType>(addr);
+	if (Hooks::HasGuestMemSink())
+		Hooks::OnGuestMem(addr, static_cast<u64>(value), sizeof(DataType), true);
+	return value;
+}
+
+template <typename DataType>
+void vtlb_memWrite(u32 addr, DataType data)
+{
+	if (Hooks::HasGuestMemSink())
+		Hooks::OnGuestMem(addr, static_cast<u64>(data), sizeof(DataType), false);
+	hookVtlbWrite<DataType>(addr, data);
+}
+
+// The 128-bit pair are their own functions, not instantiations of the templates above, so lq and sq
+// need their own tap or they record no access at all.
+RETURNS_R128 vtlb_memRead128(u32 mem)
+{
+	const r128 value = hookVtlbRead128(mem);
+	if (Hooks::HasGuestMemSink())
+		Hooks::OnGuestMem(mem, r128_to_u128(value).lo, 16, true);
+	return value;
+}
+
+void TAKES_R128 vtlb_memWrite128(u32 mem, r128 value)
+{
+	if (Hooks::HasGuestMemSink())
+		Hooks::OnGuestMem(mem, r128_to_u128(value).lo, 16, false);
+	hookVtlbWrite128(mem, value);
+#endif
 }
 
 template mem8_t vtlb_memRead<mem8_t>(u32 mem);
