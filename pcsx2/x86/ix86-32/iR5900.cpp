@@ -8,6 +8,9 @@
 #include "GS.h"
 #include "Host.h"
 #include "Memory.h"
+#ifdef PCSX2HOOK
+#include "Hooks.h"
+#endif
 #include "Patch.h"
 #include "R3000A.h"
 #include "R5900OpcodeTables.h"
@@ -774,6 +777,77 @@ static void recExecute()
 	eeCpuExecuting = false;
 
 	EE::Profiler.Print();
+#ifdef PCSX2HOOK
+}
+
+// Synchronous EE function call. Runs a guest function to completion from a consistent EE-thread point
+// (a hook handler) and returns $v0. Reuses the recompiler's own fastjmp exit: $ra is pointed at a
+// caller-provided marker whose trampoline calls eeSyncCallReturn(), which fastjmps back here. EE
+// interrupts are masked (Status.EIE) for the duration so no ISR vectors into the call; the caller
+// suppresses its own hooks so the target's body runs un-intercepted. For non-blocking functions only.
+// Integer/pointer args go in $a0-$a3,$t0-$t3 (up to 8); float args in $f12-$f19 (up to 8).
+static fastjmp_buf s_syncCallJmp;
+static int s_syncCallDepth = 0;
+
+int eeInSyncCall()
+{
+	return s_syncCallDepth;
+}
+
+void eeSyncCallReturn()
+{
+	fastjmp_jmp(&s_syncCallJmp, 1); // never returns; unwinds to eeRunFunctionSync's fastjmp_set
+}
+
+u32 eeRunFunctionSync(u32 pc, const u32* gpr, int ngpr, const float* fpr, int nfpr, u32 returnMarker)
+{
+	static const int kArgGpr[8] = {4, 5, 6, 7, 8, 9, 10, 11}; // $a0-$a3, $t0-$t3
+	if (ngpr > 8)
+		ngpr = 8;
+	if (nfpr > 8)
+		nfpr = 8;
+
+	// Save the register file we clobber; leave the timing counters (cycle/nextEventCycle) advancing.
+	const GPRregs savedGPR = cpuRegs.GPR;
+	const GPR_reg savedHI = cpuRegs.HI;
+	const GPR_reg savedLO = cpuRegs.LO;
+	const u32 savedSA = cpuRegs.sa;
+	const u32 savedPC = cpuRegs.pc;
+	const u32 savedDS = cpuRegs.IsDelaySlot;
+	const u32 savedStatus = cpuRegs.CP0.n.Status.val;
+	FPRreg savedFpr[8];
+	for (int i = 0; i < nfpr; i++)
+		savedFpr[i] = fpuRegs.fpr[12 + i];
+	const fastjmp_buf savedJmp = s_syncCallJmp; // support nested sync calls
+
+	for (int i = 0; i < ngpr; i++)
+		cpuRegs.GPR.r[kArgGpr[i]].SD[0] = static_cast<s32>(gpr[i]); // sign-extend into the 64-bit reg
+	for (int i = 0; i < nfpr; i++)
+		fpuRegs.fpr[12 + i].f = fpr[i];
+	cpuRegs.GPR.n.ra.UL[0] = returnMarker;
+	cpuRegs.pc = pc;
+	cpuRegs.IsDelaySlot = 0;
+	cpuRegs.CP0.n.Status.b.EIE = 0; // no interrupt may vector into the call
+
+	s_syncCallDepth++;
+	if (!fastjmp_set(&s_syncCallJmp))
+		((void (*)())EnterRecompiledCode)();
+	s_syncCallDepth--;
+
+	const u32 ret = cpuRegs.GPR.n.v0.UL[0];
+
+	cpuRegs.GPR = savedGPR;
+	cpuRegs.HI = savedHI;
+	cpuRegs.LO = savedLO;
+	cpuRegs.sa = savedSA;
+	cpuRegs.pc = savedPC;
+	cpuRegs.IsDelaySlot = savedDS;
+	cpuRegs.CP0.n.Status.val = savedStatus;
+	for (int i = 0; i < nfpr; i++)
+		fpuRegs.fpr[12 + i] = savedFpr[i];
+	s_syncCallJmp = savedJmp;
+	return ret;
+#endif
 }
 
 ////////////////////////////////////////////////////
@@ -1690,6 +1764,20 @@ void recompileNextInstruction(bool delayslot, bool swapped_delay_slot)
 	if (EmuConfig.EnablePatches)
 		Patch::ApplyDynamicPatches(pc);
 
+#ifdef PCSX2HOOK
+	// Middleware hook: run the native handler at the function entry. It returns whether to
+	// skip the original body (Exit -> return to $ra via the dispatcher) or run it (Continue).
+	if (!delayslot && Hooks::IsHooked(pc))
+	{
+		iFlushCall(FLUSH_EVERYTHING | FLUSH_PC);
+		xFastCall((void*)Hooks::Dispatch); // returns nonzero to skip the body
+		xTEST(eax, eax);
+		xForwardJZ8 runBody; // Continue: fall through to the real body
+		xJMP(DispatcherReg); // Exit: Dispatch set pc = $ra, resume the caller
+		runBody.SetTarget();
+	}
+
+#endif
 	// add breakpoint
 	if (!delayslot)
 	{
@@ -2332,7 +2420,14 @@ static void recRecompile(const u32 startpc)
 		BASEBLOCK* pblock = PC_GETBLOCK(i);
 
 		// stop before breakpoints
+#ifdef PCSX2HOOK
+		// Force a block boundary BEFORE a hooked address (i != startpc) so it begins its own
+		// block; when the block already starts at the hook, fall through and emit the trampoline +
+		// original body inline (a zero-length block here would stall the recompiler).
+		if (isBreakpointNeeded(i) != 0 || isMemcheckNeeded(i) != 0 || (i != startpc && Hooks::IsHooked(i)))
+#else
 		if (isBreakpointNeeded(i) != 0 || isMemcheckNeeded(i) != 0)
+#endif
 		{
 			s_nEndBlock = i;
 			break;

@@ -398,6 +398,16 @@ extern uint dmacInterrupt();
 
 extern void cpuReset();
 extern void cpuException(u32 code, u32 bd);
+#ifdef PCSX2HOOK
+
+// Synchronous EE function call (see iR5900.cpp). eeRunFunctionSync runs a guest function to completion
+// and returns $v0 (integer args in $a0-$a3,$t0-$t3; float args in $f12-$f19); eeSyncCallReturn is the
+// marker trampoline that fastjmps back out; eeInSyncCall is nonzero while such a call is running (so
+// hooks can suppress themselves).
+extern u32 eeRunFunctionSync(u32 pc, const u32* gpr, int ngpr, const float* fpr, int nfpr, u32 returnMarker);
+extern void eeSyncCallReturn();
+extern int eeInSyncCall();
+#endif
 extern void cpuTlbMissR(u32 addr, u32 bd);
 extern void cpuTlbMissW(u32 addr, u32 bd);
 extern void cpuTestHwInts();

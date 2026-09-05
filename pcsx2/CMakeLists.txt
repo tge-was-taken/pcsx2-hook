@@ -126,6 +126,7 @@ set(pcsx2Sources
 	Vif_Transfer.cpp
 	Vif_Unpack.cpp
 	VMManager.cpp
+	Hooks.cpp
 	vtlb.cpp
 	VU0.cpp
 	VUmicro.cpp
@@ -198,6 +199,7 @@ set(pcsx2Headers
 	Vif.h
 	Vif_Unpack.h
 	VMManager.h
+	Hooks.h
 	vtlb.h
 	VUflags.h
 	VUmicro.h
@@ -1204,7 +1206,7 @@ endif()
 
 # additonal include directories
 if(ARCH_X86)
-	target_include_directories(PCSX2_FLAGS INTERFACE "${CMAKE_SOURCE_DIR}/3rdparty/xbyak")
+	target_include_directories(PCSX2_FLAGS INTERFACE "${PROJECT_SOURCE_DIR}/3rdparty/xbyak")
 	target_compile_definitions(PCSX2_FLAGS INTERFACE XBYAK_NO_EXCEPTION)
 endif()
 target_include_directories(PCSX2_FLAGS INTERFACE
@@ -1268,7 +1270,7 @@ set_property(GLOBAL PROPERTY PCSX2_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 set_property(GLOBAL PROPERTY PCSX2_METAL_SHADERS ${pcsx2GSMetalShaders})
 
 function(setup_main_executable target)
-	file(GLOB_RECURSE RESOURCE_FILES ${CMAKE_SOURCE_DIR}/bin/resources/*)
+	file(GLOB_RECURSE RESOURCE_FILES ${PROJECT_SOURCE_DIR}/bin/resources/*)
 	foreach(path IN LISTS RESOURCE_FILES)
 		get_filename_component(file ${path} NAME)
 		if("${file}" MATCHES "^\\.") # Don't copy macOS garbage (mainly Finder's .DS_Store files) into application
@@ -1280,18 +1282,18 @@ function(setup_main_executable target)
 		if (NOT BUNDLE_EMOJI_FONT AND "${path}" MATCHES "fonts/Twemoji")
 			continue()
 		endif()
-		pcsx2_resource(${target} ${path} ${CMAKE_SOURCE_DIR}/bin/resources/)
+		pcsx2_resource(${target} ${path} ${PROJECT_SOURCE_DIR}/bin/resources/)
 	endforeach()
 
 	# Add docs to resources for not-Windows, since they don't use the bin directory.
 	if(NOT WIN32)
-		file(GLOB_RECURSE DOCS_FILES ${CMAKE_SOURCE_DIR}/bin/docs/*)
+		file(GLOB_RECURSE DOCS_FILES ${PROJECT_SOURCE_DIR}/bin/docs/*)
 		foreach(path IN LISTS DOCS_FILES)
 			get_filename_component(file ${path} NAME)
 			if("${file}" MATCHES "^\\.") # Don't copy macOS garbage (mainly Finder's .DS_Store files) into application
 				continue()
 			endif()
-			pcsx2_resource(${target} ${path} ${CMAKE_SOURCE_DIR}/bin/)
+			pcsx2_resource(${target} ${path} ${PROJECT_SOURCE_DIR}/bin/)
 		endforeach()
 	endif()
 
@@ -1304,52 +1306,52 @@ function(setup_main_executable target)
 			${PCSX2_SOURCE_DIR}/windows/PCSX2.rc
 		)
 		set_target_properties(${target} PROPERTIES WIN32_EXECUTABLE TRUE)
-		install(TARGETS ${target} DESTINATION ${CMAKE_SOURCE_DIR}/bin)
+		install(TARGETS ${target} DESTINATION ${PROJECT_SOURCE_DIR}/bin)
 		if(MSVC)
-			install(FILES $<TARGET_PDB_FILE:${target}> DESTINATION ${CMAKE_SOURCE_DIR}/bin)
+			install(FILES $<TARGET_PDB_FILE:${target}> DESTINATION ${PROJECT_SOURCE_DIR}/bin)
 		endif()
 
 		# Copy dependency libraries.
-		set(DEPS_BINDIR "${CMAKE_SOURCE_DIR}/deps/bin")
+		set(DEPS_BINDIR "${PROJECT_SOURCE_DIR}/deps/bin")
 		set(DEPS_TO_COPY freetype.dll harfbuzz.dll jpeg62.dll libpng16.dll libsharpyuv.dll libwebp.dll libwebpdemux.dll libwebpmux.dll lz4.dll SDL3.dll shaderc_shared.dll z.dll zstd.dll plutovg.dll plutosvg.dll ryml.dll)
 		set(DEPS_TO_COPY
 			$<IF:$<CONFIG:Debug>,kddockwidgets-qt6d.dll,kddockwidgets-qt6.dll>
 			${DEPS_TO_COPY}
 		)
 		foreach(DEP_TO_COPY ${DEPS_TO_COPY})
-			install(FILES "${DEPS_BINDIR}/${DEP_TO_COPY}" DESTINATION "${CMAKE_SOURCE_DIR}/bin")
+			install(FILES "${DEPS_BINDIR}/${DEP_TO_COPY}" DESTINATION "${PROJECT_SOURCE_DIR}/bin")
 		endforeach()
 
 		set(OPT_DEPS_TO_COPY avcodec-62.dll avformat-62.dll avutil-60.dll swresample-6.dll swscale-9.dll)
 		foreach(OPT_DEP_TO_COPY ${OPT_DEPS_TO_COPY})
-			install(FILES "${DEPS_BINDIR}/${OPT_DEP_TO_COPY}" DESTINATION "${CMAKE_SOURCE_DIR}/bin" OPTIONAL)
+			install(FILES "${DEPS_BINDIR}/${OPT_DEP_TO_COPY}" DESTINATION "${PROJECT_SOURCE_DIR}/bin" OPTIONAL)
 		endforeach()
 
 		set(SYMBOLS_TO_COPY ${DEPS_TO_COPY} ${OPT_DEPS_TO_COPY})
 		list(TRANSFORM SYMBOLS_TO_COPY REPLACE "[.]dll" ".pdb")
 		foreach(SYMBOL_TO_COPY ${SYMBOLS_TO_COPY})
-			install(FILES "${DEPS_BINDIR}/${SYMBOL_TO_COPY}" DESTINATION "${CMAKE_SOURCE_DIR}/bin" OPTIONAL)
+			install(FILES "${DEPS_BINDIR}/${SYMBOL_TO_COPY}" DESTINATION "${PROJECT_SOURCE_DIR}/bin" OPTIONAL)
 		endforeach()
 
-		set(AGILITY_DIR "${CMAKE_SOURCE_DIR}/deps/bin/D3D12")
+		set(AGILITY_DIR "${PROJECT_SOURCE_DIR}/deps/bin/D3D12")
 		set(AGILITY_DEPS_TO_COPY D3D12Core.dll d3d12SDKLayers.dll)
 		foreach(AGILITY_DEP_TO_COPY ${AGILITY_DEPS_TO_COPY})
-			install(FILES "${DEPS_BINDIR}/D3D12/${AGILITY_DEP_TO_COPY}" DESTINATION "${CMAKE_SOURCE_DIR}/bin/D3D12" OPTIONAL)
+			install(FILES "${DEPS_BINDIR}/D3D12/${AGILITY_DEP_TO_COPY}" DESTINATION "${PROJECT_SOURCE_DIR}/bin/D3D12" OPTIONAL)
 		endforeach()
 
 		get_target_property(WINDEPLOYQT_EXE Qt6::windeployqt IMPORTED_LOCATION)
-		install(CODE "execute_process(COMMAND \"${WINDEPLOYQT_EXE}\" \"${CMAKE_SOURCE_DIR}/bin/$<TARGET_FILE_NAME:${target}>\" --plugindir \"${CMAKE_SOURCE_DIR}/bin/QtPlugins\" --pdb --no-compiler-runtime --no-system-d3d-compiler --no-system-dxc-compiler --no-translations --no-network COMMAND_ERROR_IS_FATAL ANY)")
-		install(CODE "file(WRITE \"${CMAKE_SOURCE_DIR}/bin/qt.conf\" \"[Paths]\\nPlugins = ./QtPlugins\")")
+		install(CODE "execute_process(COMMAND \"${WINDEPLOYQT_EXE}\" \"${PROJECT_SOURCE_DIR}/bin/$<TARGET_FILE_NAME:${target}>\" --plugindir \"${PROJECT_SOURCE_DIR}/bin/QtPlugins\" --pdb --no-compiler-runtime --no-system-d3d-compiler --no-system-dxc-compiler --no-translations --no-network COMMAND_ERROR_IS_FATAL ANY)")
+		install(CODE "file(WRITE \"${PROJECT_SOURCE_DIR}/bin/qt.conf\" \"[Paths]\\nPlugins = ./QtPlugins\")")
 	endif()
 
 
 	if (UNIX AND NOT APPLE)
 		if (PACKAGE_MODE)
 			install(TARGETS pcsx2-qt DESTINATION ${CMAKE_INSTALL_FULL_BINDIR})
-			install(DIRECTORY ${CMAKE_SOURCE_DIR}/bin/resources DESTINATION ${CMAKE_INSTALL_FULL_DATADIR}/PCSX2)
+			install(DIRECTORY ${PROJECT_SOURCE_DIR}/bin/resources DESTINATION ${CMAKE_INSTALL_FULL_DATADIR}/PCSX2)
 			install(DIRECTORY ${CMAKE_BINARY_DIR}/bin/translations DESTINATION ${CMAKE_INSTALL_FULL_DATADIR}/PCSX2)
 		else()
-			install(TARGETS pcsx2-qt DESTINATION ${CMAKE_SOURCE_DIR}/bin)
+			install(TARGETS pcsx2-qt DESTINATION ${PROJECT_SOURCE_DIR}/bin)
 		endif()
 	endif()
 
@@ -1467,3 +1469,7 @@ source_group(Resources/GUI FILES ${pcsx2GuiResources})
 source_group(Resources/PAD FILES ${pcsx2PADResources})
 source_group(Resources/Recording FILES ${pcsx2RecordingVirtualPadResources})
 source_group(Resources REGULAR_EXPRESSION ${CMAKE_CURRENT_BINARY_DIR}/*)
+
+if(PCSX2HOOK)
+	target_compile_definitions(PCSX2_FLAGS INTERFACE PCSX2HOOK)
+endif()
