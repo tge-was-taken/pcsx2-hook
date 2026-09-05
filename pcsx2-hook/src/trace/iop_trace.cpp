@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0+
 
 #include "trace/iop_trace.h"
+#include "trace/json.h"
+#include "trace/table.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -139,8 +141,8 @@ void IopTrace::write() {
     std::vector<uint32_t> executed;
     std::unordered_map<std::string, uint64_t> opcodes;
     uint64_t retired = 0, covered = 0;
-    if (FILE* f = std::fopen((dir + "/iop_blocks.tsv").c_str(), "w")) {
-        std::fprintf(f, "startpc\tendpc\tinsns\tcount\tmodule\toffset\n");
+    if (FILE* f = std::fopen((dir + "/iop_blocks.jsonl").c_str(), "w")) {
+        JsonTable t(f, {"startpc", "endpc", "insns", "count", "module", "offset"});
         for (size_t i = 0; i < mBlocks.size(); i++) {
             const IopBlock& b = mBlocks[i];
             const uint64_t n = mIopBlockCounts[i];
@@ -149,9 +151,13 @@ void IopTrace::write() {
             covered++;
             retired += n * insns;
             const IopMod* mod = getModule(b.startpc);
-            std::fprintf(f, "%08X\t%08X\t%u\t%llu\t%s\t%X\n", b.startpc, b.endpc, insns,
-                         static_cast<unsigned long long>(n), mod ? mod->name.c_str() : "-",
-                         mod ? b.startpc - mod->text_addr : 0);
+            t.addHex(b.startpc, 8)
+                .addHex(b.endpc, 8)
+                .addUint(insns)
+                .addUint(n)
+                .addString(mod ? mod->name.c_str() : "-")
+                .addHex(mod ? b.startpc - mod->text_addr : 0, 0)
+                .endRow();
             for (uint32_t k = 0; k < insns; k++) {
                 const uint32_t pc = b.startpc + k * 4;
                 executed.push_back(pc);
@@ -163,20 +169,19 @@ void IopTrace::write() {
 
     std::sort(executed.begin(), executed.end());
     executed.erase(std::unique(executed.begin(), executed.end()), executed.end());
-    if (FILE* f = std::fopen((dir + "/iop_coverage.tsv").c_str(), "w")) {
-        std::fprintf(f, "addr\n");
-        for (uint32_t pc : executed) std::fprintf(f, "%08X\n", pc);
+    if (FILE* f = std::fopen((dir + "/iop_coverage.jsonl").c_str(), "w")) {
+        JsonTable t(f, {"addr"});
+        for (uint32_t pc : executed) t.addHex(pc, 8).endRow();
         std::fclose(f);
     }
 
     std::vector<std::pair<uint64_t, std::string>> ops;
     for (const auto& kv : opcodes) ops.emplace_back(kv.second, kv.first);
     std::sort(ops.rbegin(), ops.rend());
-    if (FILE* f = std::fopen((dir + "/iop_opcodes.tsv").c_str(), "w")) {
-        std::fprintf(f, "count\tmnemonic\n");
+    if (FILE* f = std::fopen((dir + "/iop_opcodes.jsonl").c_str(), "w")) {
+        JsonTable t(f, {"count", "mnemonic"});
         for (const auto& op : ops)
-            std::fprintf(f, "%llu\t%s\n", static_cast<unsigned long long>(op.first),
-                         op.second.c_str());
+            t.addUint(op.first).addString(op.second.c_str()).endRow();
         std::fclose(f);
     }
 
@@ -185,20 +190,29 @@ void IopTrace::write() {
     std::sort(imports.begin(), imports.end(), [](const Import* a, const Import* b) {
         return a->libname != b->libname ? a->libname < b->libname : a->index < b->index;
     });
-    if (FILE* f = std::fopen((dir + "/iop_imports.tsv").c_str(), "w")) {
-        std::fprintf(f, "library\tordinal\tname\tcalls\n");
+    if (FILE* f = std::fopen((dir + "/iop_imports.jsonl").c_str(), "w")) {
+        JsonTable t(f, {"library", "ordinal", "name", "calls"});
         for (const Import* imp : imports)
-            std::fprintf(f, "%s\t%u\t%s\t%llu\n", imp->libname.c_str(), imp->index,
-                         imp->funcname.empty() ? "?" : imp->funcname.c_str(),
-                         static_cast<unsigned long long>(imp->count));
+            t.addString(imp->libname.c_str())
+                .addUint(imp->index)
+                .addString(imp->funcname.empty() ? "?" : imp->funcname.c_str())
+                .addUint(imp->count)
+                .endRow();
         std::fclose(f);
     }
 
-    if (FILE* f = std::fopen((dir + "/iop_modules.tsv").c_str(), "w")) {
-        std::fprintf(f, "name\tversion\ttext\ttextSize\tentry\tgp\tdata\tbss\n");
+    if (FILE* f = std::fopen((dir + "/iop_modules.jsonl").c_str(), "w")) {
+        JsonTable t(f, {"name", "version", "text", "textSize", "entry", "gp", "data", "bss"});
         for (const IopMod& m : mModules)
-            std::fprintf(f, "%s\t%u\t%08X\t%X\t%08X\t%08X\t%X\t%X\n", m.name.c_str(), m.version,
-                         m.text_addr, m.text_size, m.entry, m.gp, m.data_size, m.bss_size);
+            t.addString(m.name.c_str())
+                .addUint(m.version)
+                .addHex(m.text_addr, 8)
+                .addHex(m.text_size, 0)
+                .addHex(m.entry, 8)
+                .addHex(m.gp, 8)
+                .addHex(m.data_size, 0)
+                .addHex(m.bss_size, 0)
+                .endRow();
         std::fclose(f);
     }
 
@@ -211,21 +225,31 @@ void IopTrace::write() {
         for (const std::string& mnem : forms) {
             for (const IopCase& c : mCases[mnem]) {
                 const uint32_t rs = (c.code >> 21) & 0x1F, rt = (c.code >> 16) & 0x1F;
-                std::fprintf(
-                    f,
-                    "{\"mnemonic\":\"%s\",\"pc\":\"%08X\",\"code\":\"%08X\",\"rs\":%u,\"rt\":%u,"
-                    "\"rsVal\":\"%08X\",\"rtVal\":\"%08X\",\"module\":\"%s\","
-                    "\"in\":{\"hi\":\"%08X\",\"lo\":\"%08X\"},\"deltas\":[",
-                    mnem.c_str(), c.pc, c.code, rs, rt, c.gpr[rs], c.gpr[rt],
-                    getModule(c.pc) ? getModule(c.pc)->name.c_str() : "-", c.hi, c.lo);
-                for (size_t i = 0; i < c.deltas.size(); i++) {
-                    const char* file = c.deltas[i].first == 32   ? "hi"
-                                       : c.deltas[i].first == 33 ? "lo"
-                                                                 : "gpr";
-                    std::fprintf(f, "%s{\"file\":\"%s\",\"n\":%u,\"after\":\"%08X\"}", i ? "," : "",
-                                 file, c.deltas[i].first, c.deltas[i].second);
+                const IopMod* mod = getModule(c.pc);
+                JsonObject row;
+                row.addString("mnemonic", mnem.c_str())
+                    .addHexDigits("pc", c.pc, 8)
+                    .addHexDigits("code", c.code, 8)
+                    .addUint("rs", rs)
+                    .addUint("rt", rt)
+                    .addHexDigits("rsVal", c.gpr[rs], 8)
+                    .addHexDigits("rtVal", c.gpr[rt], 8)
+                    .addString("module", mod ? mod->name.c_str() : "-")
+                    .beginObject("in")
+                    .addHexDigits("hi", c.hi, 8)
+                    .addHexDigits("lo", c.lo, 8)
+                    .endObject()
+                    .beginArray("deltas");
+                for (const auto& [reg, after] : c.deltas) {
+                    row.beginObject()
+                        .addString("file", reg == 32 ? "hi" : reg == 33 ? "lo" : "gpr")
+                        .addUint("n", reg)
+                        .addHexDigits("after", after, 8)
+                        .endObject();
                 }
-                std::fprintf(f, "]}\n");
+                row.endArray();
+                const std::string text = row.take();
+                std::fwrite(text.data(), 1, text.size(), f);
                 vectors++;
             }
         }

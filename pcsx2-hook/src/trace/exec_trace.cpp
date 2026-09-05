@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0+
 
 #include "trace/exec_trace.h"
+#include "trace/table.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -139,10 +140,14 @@ void ExecTrace::enableCalls() {
 
     if (const char* sitesFile = Config::get().getValue("PCSX2HOOK_EXEC_TRACE_SITES")) {
         if (FILE* f = std::fopen(sitesFile, "r")) {
+            // A JSONL table: the header names the columns, then one array per row whose first cell
+            // is the site. Only that cell is needed, so this reads it without a JSON parse.
             char line[512];
             std::fgets(line, sizeof(line), f);
             while (std::fgets(line, sizeof(line), f)) {
-                const uint32_t site = static_cast<uint32_t>(std::strtoul(line, nullptr, 16));
+                const char* quote = std::strchr(line, '"');
+                if (!quote) continue;
+                const uint32_t site = static_cast<uint32_t>(std::strtoul(quote + 1, nullptr, 16));
                 if (site == 0 || Hooks::IsHooked(site + 4)) continue;
                 mSyscallReturnSite[site + 4] = site;
                 Hooks::Register(site + 4, &execSyscallReturnHook, nullptr);
@@ -166,11 +171,16 @@ void ExecTrace::enableCalls() {
                      mSyscallSitesEnabled, mFunctionsEnabled);
 }
 
-void ExecTrace::writeSamples(FILE* f, const CallSite& site, bool withResult) {
+// One cell holding a list of samples, rather than the variable run of tab-separated cells this used
+// to append past the last named column.
+void ExecTrace::writeSamples(JsonTable& t, const CallSite& site, bool withResult) {
+    t.beginCellArray();
     for (const CallSample& s : site.samples) {
-        std::fprintf(f, "\t%08X,%08X,%08X,%08X", s.a0, s.a1, s.a2, s.a3);
-        if (withResult && s.result != kResultUnset) std::fprintf(f, "->%08X", s.result);
+        t.beginNested().pushHex(s.a0, 8).pushHex(s.a1, 8).pushHex(s.a2, 8).pushHex(s.a3, 8);
+        if (withResult && s.result != kResultUnset) t.pushHex(s.result, 8);
+        t.endNested();
     }
+    t.endCellArray();
 }
 void ExecTrace::write() {
     if (!isEnabled()) return;
@@ -183,8 +193,8 @@ void ExecTrace::write() {
     uint64_t totalInstructions = 0;
     uint64_t coveredBlocks = 0;
     uint64_t biosBlocks = 0;
-    if (FILE* f = std::fopen((dir + "/exec_blocks.tsv").c_str(), "w")) {
-        std::fprintf(f, "startpc\tendpc\tinsns\tcount\tthreads\tregion\tsymbol\n");
+    if (FILE* f = std::fopen((dir + "/exec_blocks.jsonl").c_str(), "w")) {
+        JsonTable t(f, {"startpc", "endpc", "insns", "count", "threads", "region", "symbol"});
         for (size_t i = 0; i < mBlocks.size(); i++) {
             const BlockExtent& b = mBlocks[i];
             const uint64_t count = mBlockCounts[i];
@@ -192,10 +202,14 @@ void ExecTrace::write() {
             if (count == 0) continue;
             coveredBlocks++;
             totalInstructions += count * insns;
-            std::fprintf(f, "%08X\t%08X\t%u\t%llu\t%08X\t%s\t%s\n", b.startpc, b.endpc, insns,
-                         static_cast<unsigned long long>(count), mBlockThreads[i],
-                         b.ram ? "ram" : "bios",
-                         b.ram ? getSymbols().resolve(getPhysAddr(b.startpc)).c_str() : "-");
+            t.addHex(b.startpc, 8)
+                .addHex(b.endpc, 8)
+                .addUint(insns)
+                .addUint(count)
+                .addHex(mBlockThreads[i], 8)
+                .addString(b.ram ? "ram" : "bios")
+                .addString(b.ram ? getSymbols().resolve(getPhysAddr(b.startpc)).c_str() : "-")
+                .endRow();
             if (!b.ram) {
                 biosBlocks++;
                 continue;
@@ -213,81 +227,83 @@ void ExecTrace::write() {
 
     std::sort(executed.begin(), executed.end());
     executed.erase(std::unique(executed.begin(), executed.end()), executed.end());
-    if (FILE* f = std::fopen((dir + "/exec_coverage.tsv").c_str(), "w")) {
-        std::fprintf(f, "addr\n");
-        for (uint32_t pc : executed) std::fprintf(f, "%08X\n", pc);
+    if (FILE* f = std::fopen((dir + "/exec_coverage.jsonl").c_str(), "w")) {
+        JsonTable t(f, {"addr"});
+        for (uint32_t pc : executed) t.addHex(pc, 8).endRow();
         std::fclose(f);
     }
 
     std::vector<std::pair<uint64_t, std::string>> ops;
     for (const auto& kv : opcodes) ops.emplace_back(kv.second, kv.first);
     std::sort(ops.rbegin(), ops.rend());
-    if (FILE* f = std::fopen((dir + "/exec_opcodes.tsv").c_str(), "w")) {
-        std::fprintf(f, "count\tmnemonic\n");
-        for (const auto& op : ops)
-            std::fprintf(f, "%llu\t%s\n", static_cast<unsigned long long>(op.first),
-                         op.second.c_str());
+    if (FILE* f = std::fopen((dir + "/exec_opcodes.jsonl").c_str(), "w")) {
+        JsonTable t(f, {"count", "mnemonic"});
+        for (const auto& op : ops) t.addUint(op.first).addString(op.second.c_str()).endRow();
         std::fclose(f);
     }
 
-    if (FILE* f = std::fopen((dir + "/exec_syscalls.tsv").c_str(), "w")) {
-        std::fprintf(f, "num\tname\tcount\tsamples(a0,a1,a2,a3)\n");
+    if (FILE* f = std::fopen((dir + "/exec_syscalls.jsonl").c_str(), "w")) {
+        JsonTable t(f, {"num", "name", "count", "samples"});
         std::vector<uint32_t> nums;
         for (const auto& kv : mSyscalls) nums.push_back(kv.first);
         std::sort(nums.begin(), nums.end());
         for (uint32_t num : nums) {
             const CallSite& site = mSyscalls[num];
             const char* name = R5900::bios[num & 0xFF];
-            std::fprintf(f, "%u\t%s\t%llu", num, name ? name : "unnamed",
-                         static_cast<unsigned long long>(site.count));
-            writeSamples(f, site, false);
-            std::fprintf(f, "\n");
+            t.addUint(num).addString(name ? name : "unnamed").addUint(site.count);
+            writeSamples(t, site, false);
+            t.endRow();
         }
         std::fclose(f);
     }
 
-    if (FILE* f = std::fopen((dir + "/exec_syscall_sites.tsv").c_str(), "w")) {
-        std::fprintf(f, "site\tnum\tcount\tsymbol\tsamples(a0,a1,a2,a3->v0)\n");
+    if (FILE* f = std::fopen((dir + "/exec_syscall_sites.jsonl").c_str(), "w")) {
+        JsonTable t(f, {"site", "num", "count", "symbol", "samples"});
         std::vector<uint32_t> sites;
         for (const auto& kv : mSyscallSites) sites.push_back(kv.first);
         std::sort(sites.begin(), sites.end());
         for (uint32_t site : sites) {
             const CallSite& s = mSyscallSites[site];
-            std::fprintf(f, "%08X\t%u\t%llu\t%s", site, mSyscallSiteNum[site],
-                         static_cast<unsigned long long>(s.count),
-                         getSymbols().resolve(site).c_str());
-            writeSamples(f, s, true);
-            std::fprintf(f, "\n");
+            t.addHex(site, 8)
+                .addUint(mSyscallSiteNum[site])
+                .addUint(s.count)
+                .addString(getSymbols().resolve(site).c_str());
+            writeSamples(t, s, true);
+            t.endRow();
         }
         std::fclose(f);
     }
 
-    if (FILE* f = std::fopen((dir + "/exec_threads.tsv").c_str(), "w")) {
-        std::fprintf(f, "tid\tbit\tpriority\tentry\tstack\tstackSize\tsymbol\n");
+    if (FILE* f = std::fopen((dir + "/exec_threads.jsonl").c_str(), "w")) {
+        JsonTable t(f, {"tid", "bit", "priority", "entry", "stack", "stackSize", "symbol"});
         std::vector<uint32_t> tids;
         for (const auto& kv : mThreads) tids.push_back(kv.first);
         std::sort(tids.begin(), tids.end());
         for (uint32_t tid : tids) {
-            const EEInternalThread& t = mThreads[tid];
-            std::fprintf(f, "%u\t%08X\t%d\t%08X\t%08X\t%d\t%s\n", tid,
-                         tid < kMaxThreads ? (1u << tid) : 0u, t.currentPriority, t.entry,
-                         t.stackMem, t.stackSize, getSymbols().resolve(t.entry).c_str());
+            const EEInternalThread& th = mThreads[tid];
+            t.addUint(tid)
+                .addHex(tid < kMaxThreads ? (1u << tid) : 0u, 8)
+                .addInt(th.currentPriority)
+                .addHex(th.entry, 8)
+                .addHex(th.stackMem, 8)
+                .addInt(th.stackSize)
+                .addString(getSymbols().resolve(th.entry).c_str())
+                .endRow();
         }
         std::fclose(f);
     }
 
     if (isArgsEnabled()) {
-        if (FILE* f = std::fopen((dir + "/exec_functions.tsv").c_str(), "w")) {
-            std::fprintf(f, "entry\tcount\tsymbol\tsamples(a0,a1,a2,a3)\n");
+        if (FILE* f = std::fopen((dir + "/exec_functions.jsonl").c_str(), "w")) {
+            JsonTable t(f, {"entry", "count", "symbol", "samples"});
             std::vector<uint32_t> addrs;
             for (const auto& kv : mFunctions) addrs.push_back(kv.first);
             std::sort(addrs.begin(), addrs.end());
             for (uint32_t addr : addrs) {
                 const CallSite& s = mFunctions[addr];
-                std::fprintf(f, "%08X\t%llu\t%s", addr, static_cast<unsigned long long>(s.count),
-                             getSymbols().resolve(addr).c_str());
-                writeSamples(f, s, false);
-                std::fprintf(f, "\n");
+                t.addHex(addr, 8).addUint(s.count).addString(getSymbols().resolve(addr).c_str());
+                writeSamples(t, s, false);
+                t.endRow();
             }
             std::fclose(f);
         }

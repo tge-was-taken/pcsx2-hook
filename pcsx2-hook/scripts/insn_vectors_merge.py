@@ -53,13 +53,13 @@ def main():
             for case in byForm[form]:
                 f.write(json.dumps(case, separators=(",", ":")) + "\n")
                 total += 1
-    with (out / "insn_forms.tsv").open("w") as f:
-        f.write("mnemonic\tcases\tscenes\twithMem\twithDelta\n")
+    with (out / "insn_forms.jsonl").open("w") as f:
+        f.write(json.dumps(["mnemonic", "cases", "scenes", "withMem", "withDelta"]) + "\n")
         for form in sorted(byForm):
             cases = byForm[form]
             mem = sum(1 for c in cases if "memAddr" in c)
             delta = sum(1 for c in cases if c["deltas"])
-            f.write(f"{form}\t{len(cases)}\t{len(scenes[form])}\t{mem}\t{delta}\n")
+            f.write(json.dumps([form, len(cases), len(scenes[form]), mem, delta]) + "\n")
     print(f"{len(byForm)} forms, {total} vectors kept of {read} read, into {out}")
 
 if __name__ == "__main__":

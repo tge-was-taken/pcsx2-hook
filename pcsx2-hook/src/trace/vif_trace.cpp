@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2002-2026 PCSX2 Dev Team
 // SPDX-License-Identifier: GPL-3.0+
 
+#include "trace/json.h"
 #include "trace/vif_trace.h"
 
 #include <cstdio>
@@ -61,20 +62,35 @@ void VifTrace::write() {
         records = mRecords;
         overflowed = mOverflowed;
     }
-    const std::string out = Diagnostics::get().getDumps().getPath("vif_trace.txt");
+    const std::string out = Diagnostics::get().getDumps().getPath("vif_trace.jsonl");
     FILE* f = std::fopen(out.c_str(), "w");
     if (!f) {
         return;
     }
+    const auto emit = [f](const std::string& text) { std::fwrite(text.data(), 1, text.size(), f); };
     if (overflowed) {
-        std::fprintf(f, "dropped records past %zu: raise kMaxVifRecords if more are needed\n",
-                     kMaxVifRecords);
+        emit(JsonObject()
+                 .addString("type", "overflow")
+                 .addUint("kept", kMaxVifRecords)
+                 .take());
     }
     for (const Record& r : records) {
         if (r.isTag) {
-            std::fprintf(f, "tag tadr=0x%X id=%u madr=0x%X qwc=%u\n", r.a, r.b, r.c, r.d);
+            emit(JsonObject()
+                     .addString("type", "tag")
+                     .addHexDigits("tadr", r.a, 8)
+                     .addUint("id", r.b)
+                     .addHexDigits("madr", r.c, 8)
+                     .addUint("qwc", r.d)
+                     .take());
         } else {
-            std::fprintf(f, "code cmd=0x%02X num=%u imm=0x%X raw=0x%08X\n", r.a, r.b, r.c, r.raw);
+            emit(JsonObject()
+                     .addString("type", "code")
+                     .addHexDigits("cmd", r.a, 2)
+                     .addUint("num", r.b)
+                     .addHexDigits("imm", r.c, 4)
+                     .addHexDigits("raw", r.raw, 8)
+                     .take());
         }
     }
     std::fclose(f);

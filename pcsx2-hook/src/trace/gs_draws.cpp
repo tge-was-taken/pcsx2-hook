@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0+
 
 #include "trace/gs_draws.h"
+#include "trace/json.h"
 
 #include <algorithm>
 #include <array>
@@ -140,45 +141,82 @@ void GsDraws::onDraw(const Hooks::GsDraw& d) {
     const auto bits = [](uint64_t v, unsigned lo, unsigned n) {
         return unsigned((v >> lo) & ((1ull << n) - 1));
     };
-    char row[1024];
-    std::snprintf(
-        row, sizeof(row),
-        "{\"type\":\"gs\",\"i\":%llu,\"f\":%u,\"nverts\":%u,\"prim\":%u,\"ctxt\":%u,\"ac\":%u,"
-        "\"iip\":%u,\"tme\":%u,\"fge\":%u,\"abe\":%u,\"aa1\":%u,"
-        "\"tex0\":\"0x%016llX\",\"tbp\":%u,\"tbw\":%u,\"psm\":%u,\"tfx\":%u,\"tcc\":%u,"
-        "\"tw\":%u,\"th\":%u,"
-        "\"tex1\":\"0x%016llX\",\"lcm\":%u,\"mxl\":%u,\"mmag\":%u,\"mmin\":%u,\"lodl\":%u,\"lodk\":"
-        "%d,"
-        "\"clamp\":\"0x%016llX\",\"wms\":%u,\"wmt\":%u,"
-        "\"test\":\"0x%016llX\",\"ate\":%u,\"atst\":%u,\"aref\":%u,\"afail\":%u,"
-        "\"date\":%u,\"datm\":%u,\"zte\":%u,\"ztst\":%u,"
-        "\"alpha\":\"0x%016llX\",\"a\":%u,\"b\":%u,\"c\":%u,\"d\":%u,\"fix\":%u,"
-        "\"bbox\":[%.1f,%.1f,%.1f,%.1f],\"scissor\":[%u,%u,%u,%u],"
-        "\"fbp\":%u,\"fbw\":%u,\"fpsm\":%u,\"fbmsk\":\"0x%08X\",\"rgbaq\":\"0x%08X\",\"r\":%u,"
-        "\"g\":%u,\"b_\":%u,\"a_\":%u,"
-        "\"zbp\":%u,\"zpsm\":%u,\"zmsk\":%u,\"zmin\":%u,\"zmax\":%u,"
-        "\"pabe\":%u,\"colclamp\":%u,\"fba\":%u,\"dthe\":%u,"
-        "\"dispW\":%u,\"dispH\":%u,\"disp0\":%d,\"disp1\":%d,"
-        "\"fog\":%u,\"q\":%.6g,\"vu\":\"0x%016llX\"}\n",
-        static_cast<unsigned long long>(mFrameIndex++), mGsFrame.load(), nverts, bits(prim, 0, 3),
-        bits(prim, 9, 1), bits(prim, 32, 1), bits(prim, 3, 1), bits(prim, 4, 1), bits(prim, 5, 1),
-        bits(prim, 6, 1), bits(prim, 7, 1), static_cast<unsigned long long>(tex0),
-        bits(tex0, 0, 14), bits(tex0, 14, 6), bits(tex0, 20, 6), bits(tex0, 35, 2),
-        bits(tex0, 34, 1), bits(tex0, 26, 4), bits(tex0, 30, 4),
-        static_cast<unsigned long long>(tex1), bits(tex1, 0, 1), bits(tex1, 2, 3), bits(tex1, 5, 1),
-        bits(tex1, 6, 3), bits(tex1, 19, 2), int(int32_t(bits(tex1, 32, 12) << 20) >> 20),
-        static_cast<unsigned long long>(clamp), bits(clamp, 0, 2), bits(clamp, 2, 2),
-        static_cast<unsigned long long>(test), bits(test, 0, 1), bits(test, 1, 3), bits(test, 4, 8),
-        bits(test, 12, 2), bits(test, 14, 1), bits(test, 15, 1), bits(test, 16, 1),
-        bits(test, 17, 2), static_cast<unsigned long long>(alpha), bits(alpha, 0, 2),
-        bits(alpha, 2, 2), bits(alpha, 4, 2), bits(alpha, 6, 2), bits(alpha, 32, 8), bbox[0],
-        bbox[1], bbox[2], bbox[3], bits(scissor, 0, 11), bits(scissor, 16, 11),
-        bits(scissor, 32, 11), bits(scissor, 48, 11), bits(frame, 0, 9), bits(frame, 16, 6),
-        bits(frame, 24, 6), unsigned(frame >> 32), rgbaq, rgbaq & 0xFF, (rgbaq >> 8) & 0xFF,
-        (rgbaq >> 16) & 0xFF, (rgbaq >> 24) & 0xFF, bits(d.zbuf, 0, 9), bits(d.zbuf, 24, 4),
-        bits(d.zbuf, 32, 1), d.zMin, d.zMax, d.pabe, d.colclamp, d.fba, d.dthe, d.dispW, d.dispH,
-        int(d.dispFbp0), int(d.dispFbp1), d.fog, double(d.q),
-        static_cast<unsigned long long>(Diagnostics::get().getDraws().getRunningProgram()));
+    const std::string row =
+        JsonObject()
+            .addString("type", "gs")
+            .addUint("i", mFrameIndex++)
+            .addUint("f", mGsFrame.load())
+            .addUint("nverts", nverts)
+            .addUint("prim", bits(prim, 0, 3))
+            .addUint("ctxt", bits(prim, 9, 1))
+            .addUint("ac", bits(prim, 32, 1))
+            .addUint("iip", bits(prim, 3, 1))
+            .addUint("tme", bits(prim, 4, 1))
+            .addUint("fge", bits(prim, 5, 1))
+            .addUint("abe", bits(prim, 6, 1))
+            .addUint("aa1", bits(prim, 7, 1))
+            .addHex("tex0", tex0, 16)
+            .addUint("tbp", bits(tex0, 0, 14))
+            .addUint("tbw", bits(tex0, 14, 6))
+            .addUint("psm", bits(tex0, 20, 6))
+            .addUint("tfx", bits(tex0, 35, 2))
+            .addUint("tcc", bits(tex0, 34, 1))
+            .addUint("tw", bits(tex0, 26, 4))
+            .addUint("th", bits(tex0, 30, 4))
+            .addHex("tex1", tex1, 16)
+            .addUint("lcm", bits(tex1, 0, 1))
+            .addUint("mxl", bits(tex1, 2, 3))
+            .addUint("mmag", bits(tex1, 5, 1))
+            .addUint("mmin", bits(tex1, 6, 3))
+            .addUint("lodl", bits(tex1, 19, 2))
+            .addInt("lodk", int32_t(bits(tex1, 32, 12) << 20) >> 20)
+            .addHex("clamp", clamp, 16)
+            .addUint("wms", bits(clamp, 0, 2))
+            .addUint("wmt", bits(clamp, 2, 2))
+            .addHex("test", test, 16)
+            .addUint("ate", bits(test, 0, 1))
+            .addUint("atst", bits(test, 1, 3))
+            .addUint("aref", bits(test, 4, 8))
+            .addUint("afail", bits(test, 12, 2))
+            .addUint("date", bits(test, 14, 1))
+            .addUint("datm", bits(test, 15, 1))
+            .addUint("zte", bits(test, 16, 1))
+            .addUint("ztst", bits(test, 17, 2))
+            .addHex("alpha", alpha, 16)
+            .addUint("a", bits(alpha, 0, 2))
+            .addUint("b", bits(alpha, 2, 2))
+            .addUint("c", bits(alpha, 4, 2))
+            .addUint("d", bits(alpha, 6, 2))
+            .addUint("fix", bits(alpha, 32, 8))
+            .addReals("bbox", {bbox[0], bbox[1], bbox[2], bbox[3]}, 1)
+            .addUints("scissor", {bits(scissor, 0, 11), bits(scissor, 16, 11),
+                                  bits(scissor, 32, 11), bits(scissor, 48, 11)})
+            .addUint("fbp", bits(frame, 0, 9))
+            .addUint("fbw", bits(frame, 16, 6))
+            .addUint("fpsm", bits(frame, 24, 6))
+            .addHex("fbmsk", unsigned(frame >> 32), 8)
+            .addHex("rgbaq", rgbaq, 8)
+            .addUint("r", rgbaq & 0xFF)
+            .addUint("g", (rgbaq >> 8) & 0xFF)
+            .addUint("b_", (rgbaq >> 16) & 0xFF)
+            .addUint("a_", (rgbaq >> 24) & 0xFF)
+            .addUint("zbp", bits(d.zbuf, 0, 9))
+            .addUint("zpsm", bits(d.zbuf, 24, 4))
+            .addUint("zmsk", bits(d.zbuf, 32, 1))
+            .addUint("zmin", d.zMin)
+            .addUint("zmax", d.zMax)
+            .addUint("pabe", d.pabe)
+            .addUint("colclamp", d.colclamp)
+            .addUint("fba", d.fba)
+            .addUint("dthe", d.dthe)
+            .addUint("dispW", d.dispW)
+            .addUint("dispH", d.dispH)
+            .addInt("disp0", int(d.dispFbp0))
+            .addInt("disp1", int(d.dispFbp1))
+            .addUint("fog", d.fog)
+            .addReal("q", double(d.q))
+            .addHex("vu", Diagnostics::get().getDraws().getRunningProgram(), 16)
+            .take();
     if (mOut) {
         mIndex++;
     }

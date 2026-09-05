@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0+
 
 #include "trace/gs_tracker.h"
+#include "trace/json.h"
+#include "trace/table.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -72,13 +74,22 @@ void GsTracker::report(const char* reason, std::FILE* out) {
     }
     std::sort(sites.begin(), sites.end(),
               [](const Site* a, const Site* b) { return a->kicks > b->kicks; });
-    std::fprintf(out, "[gstrack] GS submissions (%s): %llu kicks across %zu call sites\n",
-                 reason ? reason : "", static_cast<unsigned long long>(totalKicks), sites.size());
+    const std::string header = JsonObject()
+                                   .addString("type", "gsKicks")
+                                   .addString("reason", reason ? reason : "")
+                                   .addUint("kicks", totalKicks)
+                                   .addUint("sites", sites.size())
+                                   .take();
+    std::fwrite(header.data(), 1, header.size(), out);
+    JsonTable table(out, {"channel", "kicks", "qwc", "symbol", "caller", "madr"});
     for (const Site* s : sites) {
-        std::fprintf(out, "  %-4s kicks=%-6llu qwc=%-8llu %s  <-  %s  (madr=0x%08X)\n",
-                     getChanName(s->chan), static_cast<unsigned long long>(s->kicks),
-                     static_cast<unsigned long long>(s->qwc), getSymbols().resolve(s->eepc).c_str(),
-                     getSymbols().resolve(s->ra).c_str(), s->sampleMadr);
+        table.addString(getChanName(s->chan))
+            .addUint(s->kicks)
+            .addUint(s->qwc)
+            .addString(getSymbols().resolve(s->eepc).c_str())
+            .addString(getSymbols().resolve(s->ra).c_str())
+            .addHex(s->sampleMadr, 8)
+            .endRow();
     }
     mSites.clear();
 }

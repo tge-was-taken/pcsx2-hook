@@ -5,7 +5,7 @@ Instructions are decoded from the raw words, not from the disassembly text in th
 mirror PCSX2's (DisVUmicro.h, VUops.cpp) and every operation follows its VU interpreter.
 """
 
-USAGE = """usage: vu2c.py <vu1_programs.txt> [options]
+USAGE = """usage: vu2c.py <vu1_programs.jsonl> [options]
   --list            one line per program, no code
   --all             translate every program (the default)
   --program HASH    translate this program (prefix of the dump's hash); repeatable
@@ -22,6 +22,7 @@ USAGE = """usage: vu2c.py <vu1_programs.txt> [options]
   --no-asm          drop the trailing mnemonic comments
   --no-addr         drop the address column
   --no-preamble     drop the header explaining the notation"""
+import json
 import os
 import re
 import struct
@@ -1189,21 +1190,22 @@ def write_split(outdir, path, picked, others, opts, argv):
              ", %s removed" % plural(len(stale), "stale file") if stale else ""))
 
 
+def read_jsonl(path):
+    with open(path) as f:
+        return [json.loads(l) for l in f if l.strip()]
+
+
 def parse_watch(path):
     """{program: [{quadword: (w0, w1, w2, w3)}]}, one entry per sample, from a VU watch dump."""
-    head = re.compile(r"^f(\d+) b(\d+)\s+vu(\w+)")
-    cell = re.compile(r"^\s+mem\[(\d+)\]\s+hex=((?:[0-9A-F]{8} ?){4})")
-    samples, current = {}, None
-    for text in open(path):
-        m = head.match(text)
-        if m:
-            current = {}
-            samples.setdefault(m.group(3), []).append(current)
+    samples = {}
+    for row in read_jsonl(path):
+        if row.get("type") == "watchHeader":
             continue
-        m = cell.match(text)
-        if m and current is not None:
-            words = [int.from_bytes(bytes.fromhex(w), "little") for w in m.group(2).split()]
-            current[int(m.group(1))] = tuple(words)
+        cells = {}
+        for quad in row["quads"]:
+            b = bytes(quad["u8"])
+            cells[quad["mem"]] = tuple(int.from_bytes(b[i:i + 4], "little") for i in range(0, 16, 4))
+        samples.setdefault(row["vu"], []).append(cells)
     return samples
 
 
@@ -1248,40 +1250,31 @@ def parse_exec(path):
         01B3 1 target=0422
         04A0 120 taken=119
     """
-    head = re.compile(r"^run\s+f(\d+)\s+b(\d+)\s+vu(\w+)(?:\s+entry=([0-9A-Fa-f]+))?")
-    row = re.compile(r"^\s*([0-9A-Fa-f]{1,4})(?:\s+(\d+))?((?:\s+\S+=\S+)*)\s*$")
-    runs, current, order = {}, None, None
-    for text in open(path):
-        m = head.match(text)
-        if m:
-            current = runs.setdefault(m.group(3), {"runs": 0, "count": {}, "targets": {},
-                                                   "taken": {}, "entries": {}, "sequence": []})
-            current["runs"] += 1
-            order = []
-            current["sequence"].append({"frame": int(m.group(1)), "batch": int(m.group(2)),
-                                        "steps": order})
-            if m.group(4):
-                entry = int(m.group(4), 16)
-                current["entries"][entry] = current["entries"].get(entry, 0) + 1
+    runs = {}
+    for entry in read_jsonl(path):
+        if entry.get("type") != "run":
             continue
-        m = row.match(text)
-        if not m or current is None:
-            continue
-        addr, count = int(m.group(1), 16), int(m.group(2) or 1)
-        current["count"][addr] = current["count"].get(addr, 0) + count
-        wrote, jumped = {}, []
-        for field in m.group(3).split():
-            key, _, value = field.partition("=")
-            if key == "target":
-                for one in value.split(","):
-                    seen = current["targets"].setdefault(addr, {})
-                    seen[int(one, 16)] = seen.get(int(one, 16), 0) + count
-                    jumped.append(int(one, 16))
-            elif key == "taken":
-                current["taken"][addr] = current["taken"].get(addr, 0) + int(value)
-            else:
-                wrote[key] = [int(w, 16) for w in value.split(",")]
-        order.append((addr, wrote, jumped))
+        current = runs.setdefault(entry["vu"], {"runs": 0, "count": {}, "targets": {},
+                                                "taken": {}, "entries": {}, "sequence": []})
+        current["runs"] += 1
+        order = []
+        current["sequence"].append({"frame": entry["frame"], "batch": entry["batch"],
+                                    "steps": order})
+        start = int(entry["entry"], 16)
+        current["entries"][start] = current["entries"].get(start, 0) + 1
+        for step in entry["rows"]:
+            addr = int(step["addr"], 16)
+            current["count"][addr] = current["count"].get(addr, 0) + 1
+            jumped = []
+            if "target" in step:
+                target = int(step["target"], 16)
+                seen = current["targets"].setdefault(addr, {})
+                seen[target] = seen.get(target, 0) + 1
+                jumped.append(target)
+            if step.get("taken"):
+                current["taken"][addr] = current["taken"].get(addr, 0) + 1
+            wrote = {w["reg"]: [int(v, 16) for v in w["value"]] for w in step.get("wrote", [])}
+            order.append((addr, wrote, jumped))
     return runs
 
 
@@ -1336,24 +1329,23 @@ def render_trace(prog, run, index, opts):
 
 
 def parse_dump(path):
-    head = re.compile(r"^program (\w+)\s+addr=0x([0-9a-fA-F]+) words=(\d+) instrs=(\d+) "
-                      r"uploads=(\d+)")
-    line = re.compile(r"^\s+([0-9A-F]{4})\s+([0-9A-F]{8})\s+([0-9A-F]{8})\s\s+(.*)$")
-    progs, cur = [], None
-    for text in open(path):
-        m = head.match(text)
-        if m:
-            cur = {"hash": m.group(1), "addr": int(m.group(2), 16), "uploads": int(m.group(5)),
-                   "base": int(m.group(2), 16) // 8, "ins": [],
-                   # A resident-image block carries the entry-program hashes an execution trace keys
-                   # its runs by, since the image itself was never a run's program.
-                   "aliases": re.search(r"aliases=(\S+)", text).group(1).split(",")
-                              if "aliases=" in text else []}
-            progs.append(cur)
+    progs = []
+    for row in read_jsonl(path):
+        if row.get("type") not in ("program", "image"):
             continue
-        m = line.match(text)
-        if m and cur is not None:
-            cur["ins"].append((int(m.group(2), 16), int(m.group(3), 16), m.group(4).rstrip()))
+        addr = int(row.get("addr", "0"), 16) if isinstance(row.get("addr"), str) else 0
+        prog = {"hash": row["hash"], "addr": addr, "uploads": row.get("uploads", 0),
+                "base": addr // 8, "ins": [],
+                # An image block carries the entry-program hashes an execution trace keys its runs
+                # by, since the image itself was never a run's program.
+                "aliases": row.get("aliases", [])}
+        for ins in row["code"]:
+            lower = ins.get("lowerDis")
+            if lower is None and "immediate" in ins:
+                lower = "[I] %g" % ins["immediate"]
+            text = "%-36s %s" % (ins.get("upperDis", "").strip(), (lower or "").strip())
+            prog["ins"].append((int(ins["upper"], 16), int(ins["lower"], 16), text.rstrip()))
+        progs.append(prog)
     return progs
 
 

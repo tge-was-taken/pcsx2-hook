@@ -111,7 +111,7 @@ private:
     const std::string& getMnemonic(uint32_t pc, uint32_t code);
     void runOne(uint32_t pc, uint32_t code);
     bool isSynthSafe(uint32_t code);
-    void writeHex(FILE* f, const uint8_t* b);
+    static std::string hexWindow(const uint8_t* b);
     void writeCase(FILE* f, const std::string& mnem, const Case& c, bool synthetic);
 
     bool mEnabled = false;

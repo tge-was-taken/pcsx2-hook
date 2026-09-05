@@ -6,10 +6,13 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <memory>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
 #include "pcsx2/Hooks.h"
+#include "trace/table.h"
 
 namespace pcsx2hook {
 
@@ -66,12 +69,13 @@ private:
     void emitRun();
     bool isReadable(uint32_t addr);
     uint32_t snapshotWindow(uint32_t addr, uint8_t* out);
-    void writeHex(FILE* f, const uint8_t* b, uint32_t n);
+    static std::string hexBlob(const uint8_t* b, uint32_t n);
 
     std::unordered_map<uint32_t, FnState> mPerFn;
     uint8_t mArgBuf[kMaxDepth][kGprArgs][kArgMax];
     FILE* mFile = nullptr;
     FILE* mSeqFile = nullptr;
+    std::unique_ptr<JsonTable> mSeq;
     std::unordered_map<uint64_t, uint32_t> mDataIds;
     uint32_t mNextDataId = 0;
     uint32_t mRunId = 0xFFFFFFFFu;

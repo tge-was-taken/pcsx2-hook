@@ -7,16 +7,28 @@ which scenes reached it, since "one scene needs this" and "everything needs this
 """
 import argparse
 import collections
+import json
 import pathlib
 import sys
 
 
-def readTsv(path):
+def readTable(path):
+    """A JSONL table: a header array of column names, then one array per row."""
     if not path.exists():
         return []
     with path.open() as f:
-        header = f.readline().rstrip("\n").split("\t")
-        return [dict(zip(header, line.rstrip("\n").split("\t"))) for line in f if line.strip()]
+        lines = [l for l in f if l.strip()]
+    if not lines:
+        return []
+    header = json.loads(lines[0])
+    return [dict(zip(header, json.loads(l))) for l in lines[1:]]
+
+
+def writeTable(path, columns, rows):
+    with path.open("w") as f:
+        f.write(json.dumps(columns) + "\n")
+        for row in rows:
+            f.write(json.dumps(row) + "\n")
 
 
 def main():
@@ -55,7 +67,7 @@ def main():
         slug = path.name
         if args.disc and not slug.startswith(args.disc):
             continue
-        rows = readTsv(path / "exec_coverage.tsv")
+        rows = readTable(path / "exec_coverage.jsonl")
         if not rows:
             print(f"skip {slug}: no coverage", file=sys.stderr)
             continue
@@ -63,55 +75,43 @@ def main():
         newHere = len(addrs - coverage)
         coverage |= addrs
 
-        for r in readTsv(path / "exec_opcodes.tsv"):
+        for r in readTable(path / "exec_opcodes.jsonl"):
             opcodes[r["mnemonic"]] += int(r["count"])
-        funcs = readTsv(path / "exec_functions.tsv")
+        funcs = readTable(path / "exec_functions.jsonl")
         for r in funcs:
             entry = int(r["entry"], 16)
             functions[entry] += int(r["count"])
             functionName[entry] = r["symbol"]
             functionScenes[entry].add(slug)
-        scs = readTsv(path / "exec_syscalls.tsv")
+        scs = readTable(path / "exec_syscalls.jsonl")
         for r in scs:
             num = int(r["num"])
             syscalls[num] += int(r["count"])
             syscallName[num] = r["name"]
             syscallScenes[num].add(slug)
-        for r in readTsv(path / "exec_threads.tsv"):
+        for r in readTable(path / "exec_threads.jsonl"):
             entry = int(r["entry"], 16)
             threadScenes[entry].add(slug)
             threadPrio.setdefault(entry, set()).add(r["priority"])
             threadName[entry] = r["symbol"]
-        for r in readTsv(path / "exec_syscall_sites.tsv"):
+        for r in readTable(path / "exec_syscall_sites.jsonl"):
             sites[int(r["site"], 16)] = r.get("num", "0")
         perScene.append((slug, len(addrs), newHere, len(funcs), len(scs)))
 
-    with (out / "union_coverage.tsv").open("w") as f:
-        f.write("addr\n")
-        for a in sorted(coverage):
-            f.write(f"{a:08X}\n")
-    with (out / "union_opcodes.tsv").open("w") as f:
-        f.write("count\tmnemonic\n")
-        for mnem, n in opcodes.most_common():
-            f.write(f"{n}\t{mnem}\n")
-    with (out / "union_functions.tsv").open("w") as f:
-        f.write("entry\tcount\tscenes\tsymbol\n")
-        for entry in sorted(functions):
-            f.write(f"{entry:08X}\t{functions[entry]}\t{len(functionScenes[entry])}\t{functionName[entry]}\n")
-    with (out / "union_syscalls.tsv").open("w") as f:
-        f.write("num\tname\tcount\tscenes\n")
-        for num in sorted(syscalls):
-            f.write(f"{num}\t{syscallName[num]}\t{syscalls[num]}\t{len(syscallScenes[num])}\n")
-    with (out / "union_threads.tsv").open("w") as f:
-        f.write("entry\tscenes\tpriorities\tsymbol\n")
-        for entry in sorted(threadScenes, key=lambda e: -len(threadScenes[e])):
-            prios = ",".join(sorted(threadPrio[entry], key=int))
-            f.write(f"{entry:08X}\t{len(threadScenes[entry])}\t{prios}\t{threadName[entry]}\n")
+    writeTable(out / "union_coverage.jsonl", ["addr"], [[f"{a:08X}"] for a in sorted(coverage)])
+    writeTable(out / "union_opcodes.jsonl", ["count", "mnemonic"],
+               [[n, mnem] for mnem, n in opcodes.most_common()])
+    writeTable(out / "union_functions.jsonl", ["entry", "count", "scenes", "symbol"],
+               [[f"{e:08X}", functions[e], len(functionScenes[e]), functionName[e]]
+                for e in sorted(functions)])
+    writeTable(out / "union_syscalls.jsonl", ["num", "name", "count", "scenes"],
+               [[n, syscallName[n], syscalls[n], len(syscallScenes[n])] for n in sorted(syscalls)])
+    writeTable(out / "union_threads.jsonl", ["entry", "scenes", "priorities", "symbol"],
+               [[f"{e:08X}", len(threadScenes[e]), sorted(threadPrio[e], key=int), threadName[e]]
+                for e in sorted(threadScenes, key=lambda e: -len(threadScenes[e]))])
     # Same shape the runtime reads back as PCSX2HOOK_EXEC_TRACE_SITES.
-    with (out / f"sites-{args.disc or 'all'}.tsv").open("w") as f:
-        f.write("site\tnum\n")
-        for site in sorted(sites):
-            f.write(f"{site:08X}\t{sites[site]}\n")
+    writeTable(out / f"sites-{args.disc or 'all'}.jsonl", ["site", "num"],
+               [[f"{s:08X}", sites[s]] for s in sorted(sites)])
 
     perScene.sort(key=lambda r: -r[2])
     print(f"{'scene':<28}{'covered':>9}{'new':>9}{'funcs':>8}{'syscalls':>10}")

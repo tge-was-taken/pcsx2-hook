@@ -5,6 +5,8 @@
 
 #include <cstdint>
 
+#include "trace/table.h"
+
 namespace Hooks {
 struct Context;
 struct ExecBlockSlots;
@@ -64,7 +66,7 @@ private:
     std::string getOutputDir();
     void refreshThread();
     void recordSample(CallSite& site, const Hooks::Context& ctx, uint32_t result);
-    void writeSamples(FILE* f, const CallSite& site, bool withResult);
+    static void writeSamples(JsonTable& t, const CallSite& site, bool withResult);
 
     uint64_t mBlockCounts[kMaxBlocks];
     uint32_t mBlockThreads[kMaxBlocks];

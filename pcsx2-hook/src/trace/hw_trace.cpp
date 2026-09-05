@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0+
 
 #include "trace/hw_trace.h"
+#include "trace/table.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -75,29 +76,30 @@ void HwTrace::write() {
     for (const auto& kv : mRegs) keys.push_back(kv.first);
     std::sort(keys.begin(), keys.end());
 
-    FILE* f = std::fopen((dir + "/hw_registers.tsv").c_str(), "w");
+    FILE* f = std::fopen((dir + "/hw_registers.jsonl").c_str(), "w");
     if (!f) return;
-    std::fprintf(f, "cpu\taddr\tsize\treads\twrites\tdistinct\tvalues\n");
+    JsonTable regs(f, {"cpu", "addr", "size", "reads", "writes", "distinct", "values"});
     size_t eeCount = 0, iopCount = 0;
     for (uint64_t key : keys) {
         const RegisterUse& r = mRegs[key];
         const bool iop = (key >> 32) != 0;
         (iop ? iopCount : eeCount)++;
-        std::fprintf(f, "%s\t%08X\t%u\t%llu\t%llu\t%llu\t", iop ? "iop" : "ee",
-                     static_cast<uint32_t>(key & 0xFFFFFFFF), r.size,
-                     static_cast<unsigned long long>(r.reads),
-                     static_cast<unsigned long long>(r.writes),
-                     static_cast<unsigned long long>(r.distinctValues));
-        for (size_t i = 0; i < r.values.size(); i++)
-            std::fprintf(f, "%s%llX", i ? "," : "", static_cast<unsigned long long>(r.values[i]));
-        std::fprintf(f, "\n");
+        regs.addString(iop ? "iop" : "ee")
+            .addHex(uint32_t(key & 0xFFFFFFFF), 8)
+            .addUint(r.size)
+            .addUint(r.reads)
+            .addUint(r.writes)
+            .addUint(r.distinctValues)
+            .beginCellArray();
+        for (uint64_t v : r.values) regs.pushHex(v, 0);
+        regs.endCellArray().endRow();
     }
     std::fclose(f);
 
     getSymbols().load();
-    FILE* sf = std::fopen((dir + "/hw_sites.tsv").c_str(), "w");
+    FILE* sf = std::fopen((dir + "/hw_sites.jsonl").c_str(), "w");
     if (sf) {
-        std::fprintf(sf, "cpu\taddr\tpc\tsymbol\treads\twrites\n");
+        JsonTable sites_(sf, {"cpu", "addr", "pc", "symbol", "reads", "writes"});
         size_t siteCount = 0;
         uint64_t dropped = 0;
         for (uint64_t key : keys) {
@@ -118,10 +120,13 @@ void HwTrace::write() {
                     name = getSymbols().isInCodeRange(c.pc) ? getSymbols().resolve(c.pc)
                                                             : std::string("-");
                 }
-                std::fprintf(sf, "%s\t%08X\t%08X\t%s\t%llu\t%llu\n", iop ? "iop" : "ee",
-                             static_cast<uint32_t>(key & 0xFFFFFFFF), c.pc, name.c_str(),
-                             static_cast<unsigned long long>(c.reads),
-                             static_cast<unsigned long long>(c.writes));
+                sites_.addString(iop ? "iop" : "ee")
+                    .addHex(uint32_t(key & 0xFFFFFFFF), 8)
+                    .addHex(c.pc, 8)
+                    .addString(name.c_str())
+                    .addUint(c.reads)
+                    .addUint(c.writes)
+                    .endRow();
                 siteCount++;
             }
         }

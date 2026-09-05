@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2002-2026 PCSX2 Dev Team
 // SPDX-License-Identifier: GPL-3.0+
 
+#include "trace/json.h"
 #include "trace/sif_trace.h"
 
 #include <cstdio>
@@ -42,17 +43,21 @@ void SifTrace::onTransfer(uint32_t channel, bool toEE, uint32_t madr, uint32_t q
     const uint32_t keep = count > kMaxPacketWords ? kMaxPacketWords : count;
     if (keep < count) mClipped++;
     const std::vector<uint32_t>& chain = mChain[channel & 1];
-    std::fprintf(mFile,
-                 "{\"i\":%llu,\"ch\":%u,\"dir\":\"%s\",\"madr\":\"%08X\",\"qwc\":%u,"
-                 "\"words\":%u%s,\"chain\":[",
-                 static_cast<unsigned long long>(mTotal), channel, toEE ? "iop2ee" : "ee2iop", madr,
-                 qwc, count, keep < count ? ",\"clipped\":true" : "");
-    for (size_t k = 0; k < chain.size(); k++)
-        std::fprintf(mFile, "%s\"%s\"", k ? "," : "", resolveEE(chain[k]).c_str());
-    std::fprintf(mFile, "],\"data\":[");
-    for (uint32_t k = 0; words && k < keep; k++)
-        std::fprintf(mFile, "%s\"%08X\"", k ? "," : "", words[k]);
-    std::fprintf(mFile, "]}\n");
+    JsonObject row;
+    row.addUint("i", mTotal)
+        .addUint("ch", channel)
+        .addString("dir", toEE ? "iop2ee" : "ee2iop")
+        .addHexDigits("madr", madr, 8)
+        .addUint("qwc", qwc)
+        .addUint("words", count);
+    if (keep < count) row.addBool("clipped", true);
+    row.beginArray("chain");
+    for (uint32_t pc : chain) row.pushString(resolveEE(pc).c_str());
+    row.endArray().beginArray("data");
+    for (uint32_t k = 0; words && k < keep; k++) row.pushHexDigits(words[k], 8);
+    row.endArray();
+    const std::string text = row.take();
+    std::fwrite(text.data(), 1, text.size(), mFile);
     mTotal++;
     mWords += count;
 }

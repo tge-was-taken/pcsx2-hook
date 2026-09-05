@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0+
 
 #include "trace/draw_context.h"
+#include "trace/json.h"
+#include "trace/table.h"
 
 #include <algorithm>
 #include <array>
@@ -30,7 +32,6 @@ size_t s_execTotalSteps = 0;
 // one thing that says whether a draw is still open when the work it caused reaches the VU.
 namespace {
 constexpr size_t kMaxProbeRows = 6000;
-std::vector<std::string> s_probeRows;
 uint32_t s_probeSeq = 0;
 std::mutex s_probeMutex;
 
@@ -38,6 +39,15 @@ bool probeEnabled() {
     static const bool on = Config::get().getValue("PCSX2HOOK_DRAW_PROBE") != nullptr;
     return on;
 }
+
+struct ProbeEvent {
+    uint32_t seq;
+    const char* kind;
+    uint32_t depth;
+    uint32_t arg;
+    std::string label;
+};
+std::vector<ProbeEvent> s_probeRows;
 
 void probeAdd(const char* kind, uint32_t arg, const char* label) {
     if (!probeEnabled()) {
@@ -47,10 +57,7 @@ void probeAdd(const char* kind, uint32_t arg, const char* label) {
     if (s_probeRows.size() >= kMaxProbeRows) {
         return;
     }
-    char buf[160];
-    std::snprintf(buf, sizeof(buf), "%6u  %-5s  depth=%zu  arg=0x%08X  %s", s_probeSeq++, kind,
-                  s_depth, arg, label ? label : "");
-    s_probeRows.emplace_back(buf);
+    s_probeRows.push_back({s_probeSeq++, kind, uint32_t(s_depth), arg, label ? label : ""});
 }
 }  // namespace
 uint64_t hashWords(const uint32_t* words, uint32_t count) {
@@ -158,64 +165,76 @@ uint64_t DrawTrace::getRunningProgram() {
     return mRunning;
 }
 
+// The upper word's I bit makes the lower word a float immediate rather than an instruction, which
+// is why the lower half is not always disassembled.
+void addCode(JsonObject& row, const std::vector<uint32_t>& code, uint32_t basePc, size_t last) {
+    constexpr uint32_t kIBit = 1u << 31;
+    // PCSX2's disassembler indents what it returns, which is padding for its own listing.
+    const auto trim = [](const char* text) {
+        while (text && *text == ' ') text++;
+        return text ? text : "";
+    };
+    row.beginArray("code");
+    for (size_t i = 0; i + 1 < last; i += 2) {
+        const uint32_t pc = basePc + uint32_t(i / 2);
+        const char* upper = disVU1MicroUF(code[i + 1], pc * 8);
+        row.beginObject()
+            .addHex("pc", pc, 4)
+            .addHexDigits("upper", code[i + 1], 8)
+            .addHexDigits("lower", code[i], 8)
+            .addString("upperDis", trim(upper));
+        if (code[i + 1] & kIBit) {
+            float imm = 0.0f;
+            std::memcpy(&imm, &code[i], sizeof(imm));
+            row.addReal("immediate", double(imm));
+        } else if (const char* lower = disVU1MicroLF(code[i], pc * 8)) {
+            row.addString("lowerDis", trim(lower));
+        }
+        row.endObject();
+    }
+    row.endArray();
+}
+
 void DrawTrace::writeVuImages() {
     if (mImages.empty()) {
         return;
     }
-    const std::string out = Diagnostics::get().getDumps().getPath("vu1_images.txt");
+    const std::string out = Diagnostics::get().getDumps().getPath("vu1_images.jsonl");
     FILE* f = std::fopen(out.c_str(), "w");
     if (!f) {
         return;
     }
-    std::fprintf(f, "%zu distinct VU1 micro-memory images (%u instructions each)\n\n",
-                 mImages.size(), kVu1Instrs);
+    const auto emit = [f](const std::string& text) { std::fwrite(text.data(), 1, text.size(), f); };
+    emit(JsonObject()
+             .addString("type", "header")
+             .addUint("images", mImages.size())
+             .addUint("instructions", kVu1Instrs)
+             .take());
     for (const auto& [hash, img] : mImages) {
-        std::string getEntries;
-        for (uint32_t e : img.getEntries) {
-            getEntries += (getEntries.empty() ? "" : " ");
-            getEntries += "0x" + std::to_string(e);
-        }
-        std::string aliases;
-        for (const auto& [phash, prog] : mPrograms) {
-            for (uint32_t e : prog.getEntries) {
-                if (img.getEntries.count(e)) {
-                    aliases += (aliases.empty() ? "" : ",");
-                    char buf[24];
-                    std::snprintf(buf, sizeof(buf), "%016llX",
-                                  static_cast<unsigned long long>(phash));
-                    aliases += buf;
-                    break;
-                }
-            }
-        }
         size_t last = img.code.size();
         while (last > 0 && img.code[last - 1] == 0) {
             last--;
         }
-        std::fprintf(f,
-                     "program %016llX  addr=0x0000 words=%zu instrs=%zu uploads=%u  under image"
-                     "  getEntries=%s aliases=%s\n",
-                     static_cast<unsigned long long>(hash), last, last / 2, img.execs,
-                     getEntries.c_str(), aliases.c_str());
-        for (size_t i = 0; i + 1 < last; i += 2) {
-            const uint32_t pc = static_cast<uint32_t>(i / 2);
-            char upper[128] = {};
-            if (const char* u = disVU1MicroUF(img.code[i + 1], pc * 8)) {
-                std::snprintf(upper, sizeof(upper), "%s", u);
+        JsonObject row;
+        row.addString("type", "image")
+            .addHexDigits("hash", hash, 16)
+            .addUint("words", last)
+            .addUint("instrs", last / 2)
+            .addUint("execs", img.execs)
+            .beginArray("entries");
+        for (uint32_t e : img.getEntries) row.pushUint(e);
+        row.endArray().beginArray("aliases");
+        for (const auto& [phash, prog] : mPrograms) {
+            for (uint32_t e : prog.getEntries) {
+                if (img.getEntries.count(e)) {
+                    row.pushHexDigits(phash, 16);
+                    break;
+                }
             }
-            constexpr uint32_t kIBit = 1u << 31;
-            char lower[128] = {};
-            if (img.code[i + 1] & kIBit) {
-                float imm = 0.0f;
-                std::memcpy(&imm, &img.code[i], sizeof(imm));
-                std::snprintf(lower, sizeof(lower), "[I] %g", double(imm));
-            } else if (const char* l = disVU1MicroLF(img.code[i], pc * 8)) {
-                std::snprintf(lower, sizeof(lower), "%s", l);
-            }
-            std::fprintf(f, "    %04X  %08X %08X   %-36s %s\n", pc, img.code[i + 1], img.code[i],
-                         upper, lower);
         }
-        std::fprintf(f, "\n");
+        row.endArray();
+        addCode(row, img.code, 0, last);
+        emit(row.take());
     }
     std::fclose(f);
     std::printf("[vu] wrote %s (%zu images)\n", out.c_str(), mImages.size());
@@ -224,67 +243,57 @@ void DrawTrace::writeVuTrace() {
     if (!isVuTraceEnabled() || mPrograms.empty()) {
         return;
     }
-    const std::string out = Diagnostics::get().getDumps().getPath("vu1_programs.txt");
+    const std::string out = Diagnostics::get().getDumps().getPath("vu1_programs.jsonl");
     FILE* f = std::fopen(out.c_str(), "w");
     if (!f) {
         return;
     }
-    std::fprintf(f, "%zu distinct VU1 microprograms\n\n", mPrograms.size());
+    const auto emit = [f](const std::string& text) { std::fwrite(text.data(), 1, text.size(), f); };
+    emit(JsonObject().addString("type", "header").addUint("programs", mPrograms.size()).take());
+
     std::map<uint32_t, std::vector<std::pair<uint32_t, uint64_t>>> byFrame;
     for (const auto& [hash, p] : mPrograms) {
         for (const StreamPos& sp : p.at) {
             byFrame[sp.frame].emplace_back(sp.batch, hash);
         }
     }
-    std::fprintf(f, "--- upload timeline (frame: batch -> program) ---\n");
+    // Which programs were resident before which batch, which is the correlation to a draw.
     for (auto& [frame, uploads] : byFrame) {
         std::sort(uploads.begin(), uploads.end());
         uploads.erase(std::unique(uploads.begin(), uploads.end()), uploads.end());
-        std::fprintf(f, "  f%u:", frame);
+        JsonObject row;
+        row.addString("type", "timeline").addUint("frame", frame).beginArray("batches");
         uint32_t at = 0xFFFFFFFFu;
         for (const auto& [batch, hash] : uploads) {
             if (batch != at) {
-                std::fprintf(f, "%s b%u:", at == 0xFFFFFFFFu ? "" : " |", batch);
+                if (at != 0xFFFFFFFFu) row.endArray().endObject();
+                row.beginObject().addUint("batch", batch).beginArray("programs");
                 at = batch;
             }
-            std::fprintf(f, " %08X", static_cast<uint32_t>(hash >> 32));
+            row.pushHexDigits(hash, 16);
         }
-        std::fprintf(f, "\n");
+        if (at != 0xFFFFFFFFu) row.endArray().endObject();
+        row.endArray();
+        emit(row.take());
     }
-    std::fprintf(f, "\n");
+
     for (const auto& [hash, p] : mPrograms) {
-        std::string labels;
-        for (const auto& [label, n] : p.labels) {
-            labels += (labels.empty() ? "" : ", ") + label + ":" + std::to_string(n);
-        }
-        std::string where;
+        JsonObject row;
+        row.addString("type", "program")
+            .addHexDigits("hash", hash, 16)
+            .addHex("addr", p.addr, 4)
+            .addUint("words", p.words)
+            .addUint("instrs", p.words / 2)
+            .addUint("uploads", p.uploads)
+            .beginObject("under");
+        for (const auto& [label, n] : p.labels) row.addUint(label.c_str(), n);
+        row.endObject().beginArray("ranBefore");
         for (const StreamPos& sp : p.at) {
-            where += (where.empty() ? "" : " ");
-            where += "f" + std::to_string(sp.frame) + "b" + std::to_string(sp.batch);
+            row.beginObject().addUint("frame", sp.frame).addUint("batch", sp.batch).endObject();
         }
-        std::fprintf(f, "program %016llX  addr=0x%04X words=%u instrs=%u uploads=%u  under %s\n",
-                     static_cast<unsigned long long>(hash), p.addr, p.words, p.words / 2, p.uploads,
-                     labels.empty() ? "-" : labels.c_str());
-        std::fprintf(f, "  ran before: %s\n", where.c_str());
-        for (size_t i = 0; i + 1 < p.code.size(); i += 2) {
-            const uint32_t pc = static_cast<uint32_t>(p.addr / 8 + i / 2);
-            char upper[128] = {};
-            if (const char* u = disVU1MicroUF(p.code[i + 1], pc * 8)) {
-                std::snprintf(upper, sizeof(upper), "%s", u);
-            }
-            constexpr uint32_t kIBit = 1u << 31;
-            char lower[128] = {};
-            if (p.code[i + 1] & kIBit) {
-                float imm = 0.0f;
-                std::memcpy(&imm, &p.code[i], sizeof(imm));
-                std::snprintf(lower, sizeof(lower), "[I] %g", double(imm));
-            } else if (const char* l = disVU1MicroLF(p.code[i], pc * 8)) {
-                std::snprintf(lower, sizeof(lower), "%s", l);
-            }
-            std::fprintf(f, "    %04X  %08X %08X   %-36s %s\n", pc, p.code[i + 1], p.code[i], upper,
-                         lower);
-        }
-        std::fprintf(f, "\n");
+        row.endArray();
+        addCode(row, p.code, p.addr / 8, p.code.size());
+        emit(row.take());
     }
     std::fclose(f);
     std::printf("[vu] wrote %s (%zu programs)\n", out.c_str(), mPrograms.size());
@@ -348,7 +357,7 @@ void DrawTrace::writeVuWatchTrace() {
         std::printf("[vu] PCSX2HOOK_VU_WATCH set but names no addresses\n");
         return;
     }
-    const std::string out = Diagnostics::get().getDumps().getPath("vu1_watch.txt");
+    const std::string out = Diagnostics::get().getDumps().getPath("vu1_watch.jsonl");
     FILE* f = std::fopen(out.c_str(), "w");
     if (!f) {
         return;
@@ -360,32 +369,32 @@ void DrawTrace::writeVuWatchTrace() {
         samples = mWatchSamples;
         overflowed = mWatchOverflowed;
     }
-    std::fprintf(f, "%zu samples, watching quadwords:", samples.size());
-    for (uint32_t a : addrs) {
-        std::fprintf(f, " %u", a);
-    }
-    std::fprintf(f, "\n");
-    if (overflowed) {
-        std::fprintf(f, "dropped samples past %zu: raise kMaxWatchSamples if more are needed\n",
-                     kMaxWatchSamples);
-    }
-    std::fprintf(f, "\n");
+    const auto emit = [f](const std::string& text) { std::fwrite(text.data(), 1, text.size(), f); };
+    JsonObject head;
+    head.addString("type", "watchHeader").addUint("samples", samples.size()).beginArray("watching");
+    for (uint32_t a : addrs) head.pushUint(a);
+    head.endArray();
+    if (overflowed) head.addUint("droppedPast", kMaxWatchSamples);
+    emit(head.take());
+
     for (const WatchSample& s : samples) {
-        std::fprintf(f, "f%u b%u  vu%016llX\n", s.at.frame, s.at.batch,
-                     static_cast<unsigned long long>(s.programHash));
+        JsonObject row;
+        row.addUint("frame", s.at.frame)
+            .addUint("batch", s.at.batch)
+            .addHexDigits("vu", s.programHash, 16)
+            .beginArray("quads");
         for (size_t i = 0; i < s.quads.size() && i < addrs.size(); i++) {
             const std::array<uint8_t, 16>& q = s.quads[i];
             float fv[4];
             std::memcpy(fv, q.data(), sizeof(fv));
-            std::fprintf(
-                f,
-                "  mem[%u]  hex=%02X%02X%02X%02X %02X%02X%02X%02X %02X%02X%02X%02X %02X%02X%02X%02X"
-                "  u8=[%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u]  f32=[%g,%g,%g,%g]\n",
-                addrs[i], q[0], q[1], q[2], q[3], q[4], q[5], q[6], q[7], q[8], q[9], q[10], q[11],
-                q[12], q[13], q[14], q[15], q[0], q[1], q[2], q[3], q[4], q[5], q[6], q[7], q[8],
-                q[9], q[10], q[11], q[12], q[13], q[14], q[15], double(fv[0]), double(fv[1]),
-                double(fv[2]), double(fv[3]));
+            row.beginObject().addUint("mem", addrs[i]).beginArray("u8");
+            for (uint8_t b : q) row.pushUint(b);
+            row.endArray().beginArray("f32");
+            for (float v : fv) row.pushReal(double(v));
+            row.endArray().endObject();
         }
+        row.endArray();
+        emit(row.take());
     }
     std::fclose(f);
     std::printf("[vu] wrote %s (%zu samples)\n", out.c_str(), samples.size());
@@ -407,15 +416,19 @@ void DrawTrace::writeVuJrTrace() {
         const std::lock_guard<std::mutex> lock(mJrMutex);
         edges = mJrEdges;
     }
-    const std::string out = Diagnostics::get().getDumps().getPath("vu1_jr.txt");
+    const std::string out = Diagnostics::get().getDumps().getPath("vu1_jr.jsonl");
     FILE* f = std::fopen(out.c_str(), "w");
     if (!f) {
         return;
     }
-    std::fprintf(f, "%zu distinct (pc, register) -> target edges\n", edges.size());
+    JsonTable table(f, {"pc", "instr", "reg", "target", "targetInstr"});
     for (const JrEdge& e : edges) {
-        std::fprintf(f, "  pc=0x%04X (instr %04X)  vi%02u -> target=0x%04X (instr %04X)\n", e.pc,
-                     e.pc / 8, e.reg, e.target, e.target / 8);
+        table.addHex(e.pc, 4)
+            .addHex(e.pc / 8, 4)
+            .addUint(e.reg)
+            .addHex(e.target, 4)
+            .addHex(e.target / 8, 4)
+            .endRow();
     }
     std::fclose(f);
     std::printf("[vu] wrote %s (%zu edges)\n", out.c_str(), edges.size());
@@ -517,32 +530,40 @@ void DrawTrace::writeVuExecTrace() {
         runs = mExecRuns;
         overflowed = mExecOverflowed;
     }
-    const std::string out = Diagnostics::get().getDumps().getPath("vu1_exec.txt");
+    const std::string out = Diagnostics::get().getDumps().getPath("vu1_exec.jsonl");
     FILE* f = std::fopen(out.c_str(), "w");
     if (!f) {
         return;
     }
+    const auto emit = [f](const std::string& text) { std::fwrite(text.data(), 1, text.size(), f); };
     if (overflowed) {
-        std::fprintf(f, "dropped steps past %zu: raise kMaxExecSteps if more are needed\n",
-                     kMaxExecSteps);
+        emit(JsonObject().addString("type", "overflow").addUint("keptSteps", kMaxExecSteps).take());
     }
     size_t totalRows = 0;
     for (const ExecRun& run : runs) {
-        std::fprintf(f, "run f%u b%u vu%016llX entry=%04X\n", run.frame, run.batch,
-                     static_cast<unsigned long long>(run.hash), run.entry);
+        JsonObject out_;
+        out_.addString("type", "run")
+            .addUint("frame", run.frame)
+            .addUint("batch", run.batch)
+            .addHexDigits("vu", run.hash, 16)
+            .addHex("entry", run.entry, 4)
+            .beginArray("rows");
         for (const ExecRow& row : run.rows) {
-            std::fprintf(f, "%04X", row.addr);
-            if (row.taken) {
-                std::fprintf(f, " target=%04X taken=1", row.target);
-            }
-            for (const auto& [name, words] : row.wrote) {
-                std::fprintf(f, " %s=", name.c_str());
-                for (size_t i = 0; i < words.size(); i++) {
-                    std::fprintf(f, "%s%08X", i == 0 ? "" : ",", words[i]);
+            out_.beginObject().addHex("addr", row.addr, 4);
+            if (row.taken) out_.addHex("target", row.target, 4).addBool("taken", true);
+            if (!row.wrote.empty()) {
+                out_.beginArray("wrote");
+                for (const auto& [name, words] : row.wrote) {
+                    out_.beginObject().addString("reg", name.c_str()).beginArray("value");
+                    for (uint32_t w : words) out_.pushHexDigits(w, 8);
+                    out_.endArray().endObject();
                 }
+                out_.endArray();
             }
-            std::fprintf(f, "\n");
+            out_.endObject();
         }
+        out_.endArray();
+        emit(out_.take());
         totalRows += run.rows.size();
     }
     std::fclose(f);
@@ -554,20 +575,24 @@ void DrawTrace::writeDrawProbe() {
     if (!probeEnabled()) {
         return;
     }
-    std::vector<std::string> rows;
+    std::vector<ProbeEvent> rows;
     {
         const std::lock_guard<std::mutex> lock(s_probeMutex);
         rows = s_probeRows;
     }
-    const std::string out = Diagnostics::get().getDumps().getPath("draw_probe.txt");
+    const std::string out = Diagnostics::get().getDumps().getPath("draw_probe.jsonl");
     FILE* f = std::fopen(out.c_str(), "w");
     if (!f) {
         return;
     }
-    std::fprintf(f, "%zu events (push/pop of the draw stack, mpg/mscal from the VIF)\n\n",
-                 rows.size());
-    for (const std::string& r : rows) {
-        std::fprintf(f, "%s\n", r.c_str());
+    JsonTable table(f, {"seq", "kind", "depth", "arg", "label"});
+    for (const ProbeEvent& e : rows) {
+        table.addUint(e.seq)
+            .addString(e.kind)
+            .addUint(e.depth)
+            .addHex(e.arg, 8)
+            .addString(e.label.c_str())
+            .endRow();
     }
     std::fclose(f);
     std::printf("[draw] wrote %s (%zu events)\n", out.c_str(), rows.size());

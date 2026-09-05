@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0+
 
 #include "trace/api_trace.h"
+#include "trace/json.h"
+#include "trace/table.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -36,7 +38,7 @@ void ApiTrace::hashMix(uint64_t& h, uint64_t v) {
 
 void ApiTrace::emitRun() {
     if (mRunLen == 0 || !mSeqFile) return;
-    std::fprintf(mSeqFile, "%u\t%llu\n", mRunId, static_cast<unsigned long long>(mRunLen));
+    if (mSeq) mSeq->addUint(mRunId).addUint(mRunLen).endRow();
     mSeqRecords++;
     mRunLen = 0;
 }
@@ -106,19 +108,25 @@ Hooks::Result ApiTrace::onEnter(Hooks::Context& ctx) {
     return Hooks::Result::Continue;
 }
 
-void ApiTrace::writeHex(FILE* f, const uint8_t* b, uint32_t n) {
+// A long run of zeroes becomes *N* rather than 2N characters: an argument window is mostly padding.
+std::string ApiTrace::hexBlob(const uint8_t* b, uint32_t n) {
+    std::string out;
+    char buf[16];
     for (uint32_t i = 0; i < n;) {
         if (b[i] == 0) {
             uint32_t run = 0;
             while (i + run < n && b[i + run] == 0) run++;
             if (run >= 8) {
-                std::fprintf(f, "*%u*", run);
+                std::snprintf(buf, sizeof(buf), "*%u*", run);
+                out += buf;
                 i += run;
                 continue;
             }
         }
-        std::fprintf(f, "%02X", b[i++]);
+        std::snprintf(buf, sizeof(buf), "%02X", b[i++]);
+        out += buf;
     }
+    return out;
 }
 
 void ApiTrace::onExit(Hooks::Context& ctx) {
@@ -156,54 +164,67 @@ void ApiTrace::onExit(Hooks::Context& ctx) {
     } else {
         id = mNextDataId++;
         mDataIds.emplace(h, id);
-        std::fprintf(mFile, "{\"id\":%u,\"fn\":\"%s\",\"pc\":\"%08X\",\"args\":[", id,
-                     getSymbols().resolve(c.pc).c_str(), c.pc);
-        for (uint32_t i = 0; i < kGprArgs; i++)
-            std::fprintf(mFile, "%s\"%08X\"", i ? "," : "", c.gpr[i]);
-        std::fprintf(mFile, "],\"fargs\":[");
-        for (uint32_t i = 0; i < kFprArgs; i++)
-            std::fprintf(mFile, "%s%.9g", i ? "," : "", static_cast<double>(c.fpr[i]));
-        std::fprintf(mFile, "],\"ret\":{\"v0\":\"%08X\",\"f0\":%.9g}", ctx.v0,
-                     static_cast<double>(ctx.freg(0)));
-        std::fprintf(mFile, ",\"argmem\":[");
-        for (size_t i = 0; i < c.windows.size(); i++) {
-            const ArgWindow& w = c.windows[i];
+        JsonObject row;
+        row.addUint("id", id)
+            .addString("fn", getSymbols().resolve(c.pc).c_str())
+            .addHexDigits("pc", c.pc, 8)
+            .beginArray("args");
+        for (uint32_t i = 0; i < kGprArgs; i++) row.pushHexDigits(c.gpr[i], 8);
+        row.endArray().beginArray("fargs");
+        for (uint32_t i = 0; i < kFprArgs; i++) row.pushReal(static_cast<double>(c.fpr[i]));
+        row.endArray()
+            .beginObject("ret")
+            .addHexDigits("v0", ctx.v0, 8)
+            .addReal("f0", static_cast<double>(ctx.freg(0)))
+            .endObject()
+            .beginArray("argmem");
+        for (const ArgWindow& w : c.windows) {
             uint32_t len = w.span > kArgMin ? w.span : kArgMin;
             if (len > w.captured) len = w.captured;
             if (len == 0) continue;
             std::vector<uint8_t> after(len);
             if (const void* p = readableHost(w.addr & ~3u, len)) std::memcpy(after.data(), p, len);
-            const bool changed = std::memcmp(w.before, after.data(), len) != 0;
-            std::fprintf(mFile,
-                         "%s{\"reg\":%u,\"addr\":\"%08X\",\"len\":%u,\"touched\":%u,"
-                         "\"changed\":%s,\"before\":\"",
-                         i ? "," : "", w.reg, w.addr, len, w.span, changed ? "true" : "false");
-            writeHex(mFile, w.before, len);
-            std::fprintf(mFile, "\",\"after\":\"");
-            writeHex(mFile, after.data(), len);
-            std::fprintf(mFile, "\"}");
+            row.beginObject()
+                .addUint("reg", w.reg)
+                .addHexDigits("addr", w.addr, 8)
+                .addUint("len", len)
+                .addUint("touched", w.span)
+                .addBool("changed", std::memcmp(w.before, after.data(), len) != 0)
+                .addString("before", hexBlob(w.before, len).c_str())
+                .addString("after", hexBlob(after.data(), len).c_str())
+                .endObject();
         }
-        std::fprintf(mFile, "],\"mem\":[");
-        for (size_t i = 0; i < c.accesses.size(); i++) {
-            const Access& a = c.accesses[i];
-            std::fprintf(mFile, "%s{\"addr\":\"%08X\",\"size\":%u,\"value\":\"%llX\",\"read\":%s}",
-                         i ? "," : "", a.addr, a.size, static_cast<unsigned long long>(a.value),
-                         a.isRead ? "true" : "false");
+        row.endArray().beginArray("mem");
+        for (const Access& a : c.accesses) {
+            row.beginObject()
+                .addHexDigits("addr", a.addr, 8)
+                .addUint("size", a.size)
+                .addHexDigits("value", a.value, 0)
+                .addBool("read", a.isRead)
+                .endObject();
         }
-        std::fprintf(mFile, "]%s}\n", c.truncated ? ",\"truncated\":true" : "");
+        row.endArray();
+        if (c.truncated) row.addBool("truncated", true);
+        const std::string text = row.take();
+        std::fwrite(text.data(), 1, text.size(), mFile);
         if (c.truncated) mTruncated++;
     }
 
     if (uint32_t& seen = mShapeMemCount[id]; seen < kMemSamplesPerShape && it != mDataIds.end()) {
         seen++;
-        std::fprintf(mFile, "{\"id\":%u,\"memOnly\":true,\"mem\":[", id);
-        for (size_t i = 0; i < c.accesses.size(); i++) {
-            const Access& a = c.accesses[i];
-            std::fprintf(mFile, "%s{\"addr\":\"%08X\",\"size\":%u,\"value\":\"%llX\",\"read\":%s}",
-                         i ? "," : "", a.addr, a.size, static_cast<unsigned long long>(a.value),
-                         a.isRead ? "true" : "false");
+        JsonObject row;
+        row.addUint("id", id).addBool("memOnly", true).beginArray("mem");
+        for (const Access& a : c.accesses) {
+            row.beginObject()
+                .addHexDigits("addr", a.addr, 8)
+                .addUint("size", a.size)
+                .addHexDigits("value", a.value, 0)
+                .addBool("read", a.isRead)
+                .endObject();
         }
-        std::fprintf(mFile, "]}\n");
+        row.endArray();
+        const std::string text = row.take();
+        std::fwrite(text.data(), 1, text.size(), mFile);
     }
 
     if (id == mRunId) {
@@ -265,12 +286,12 @@ void ApiTrace::init() {
                                  ? Diagnostics::get().getDumps().getPath("api_trace.jsonl")
                                  : std::string(out);
     mFile = std::fopen((path + ".data.jsonl").c_str(), "w");
-    mSeqFile = std::fopen((path + ".seq.tsv").c_str(), "w");
+    mSeqFile = std::fopen((path + ".seq.jsonl").c_str(), "w");
     if (!mFile || !mSeqFile) {
-        std::fprintf(stderr, "[api] cannot open %s.{data.jsonl,seq.tsv}\n", path.c_str());
+        std::fprintf(stderr, "[api] cannot open %s.{data.jsonl,seq.jsonl}\n", path.c_str());
         return;
     }
-    std::fprintf(mSeqFile, "dataId\trepeat\n");
+    mSeq = std::make_unique<JsonTable>(mSeqFile, std::initializer_list<const char*>{"dataId", "repeat"});
     Hooks::AddGuestMemSink(&apiMemSink);
     std::fprintf(stderr, "[api] enabled %zu functions (%zu unresolved) -> %s\n", enabled, missing,
                  path.c_str());
@@ -285,10 +306,10 @@ void ApiTrace::write() {
         mSeqFile = nullptr;
     }
     const std::string sum =
-        std::string(Config::get().getValue("PCSX2HOOK_API_TRACE")) + ".summary.tsv";
+        std::string(Config::get().getValue("PCSX2HOOK_API_TRACE")) + ".summary.jsonl";
     uint64_t total = 0, capped = 0;
     if (FILE* g = std::fopen(sum.c_str(), "w")) {
-        std::fprintf(g, "pc\tfunction\tcalls\trecorded\trate\n");
+        JsonTable t(g, {"pc", "function", "calls", "recorded", "sampledOneIn"});
         std::vector<uint32_t> pcs;
         for (const auto& kv : mPerFn) pcs.push_back(kv.first);
         std::sort(pcs.begin(), pcs.end());
@@ -296,10 +317,12 @@ void ApiTrace::write() {
             const auto& c = mPerFn[pc];
             total += c.calls;
             if (c.recorded < c.calls) capped++;
-            std::fprintf(g, "%08X\t%s\t%llu\t%llu\t1/%llu\n", pc, getSymbols().resolve(pc).c_str(),
-                         static_cast<unsigned long long>(c.calls),
-                         static_cast<unsigned long long>(c.recorded),
-                         static_cast<unsigned long long>(c.recorded ? c.calls / c.recorded : 0));
+            t.addHex(pc, 8)
+                .addString(getSymbols().resolve(pc).c_str())
+                .addUint(c.calls)
+                .addUint(c.recorded)
+                .addUint(c.recorded ? c.calls / c.recorded : 0)
+                .endRow();
         }
         std::fclose(g);
     }

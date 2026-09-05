@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0+
 
 #include "trace/insn_trace.h"
+#include "trace/json.h"
+#include "trace/table.h"
 
 #include <algorithm>
 #include <chrono>
@@ -410,73 +412,89 @@ bool InsnTrace::runSynth() {
     return true;
 }
 
-void InsnTrace::writeHex(FILE* f, const uint8_t* b) {
-    for (uint32_t i = 0; i < kMemWindow; i++) std::fprintf(f, "%02X", b[i]);
+std::string InsnTrace::hexWindow(const uint8_t* b) {
+    std::string out;
+    char buf[4];
+    for (uint32_t i = 0; i < kMemWindow; i++) {
+        std::snprintf(buf, sizeof(buf), "%02X", b[i]);
+        out += buf;
+    }
+    return out;
 }
 
 void InsnTrace::writeCase(FILE* f, const std::string& mnem, const Case& c, bool synthetic) {
-    std::fprintf(
-        f,
-        "{\"mnemonic\":\"%s\",\"pc\":\"%08X\",\"code\":\"%08X\",\"sym\":\"%s\","
-        "\"rs\":%u,\"rt\":%u,\"rsVal\":\"%016llX%016llX\",\"rtVal\":\"%016llX%016llX\","
-        "\"fs\":%u,\"ft\":%u,\"fsVal\":\"%08X\",\"ftVal\":\"%08X\","
-        "\"pcAfter\":\"%08X\",\"nested\":%u,\"in\":{"
-        "\"hi\":\"%016llX%016llX\",\"lo\":\"%016llX%016llX\",\"sa\":\"%08X\","
-        "\"fcr31\":\"%08X\",\"facc\":\"%08X\",\"faccflag\":\"%08X\",\"cop0status\":\"%08X\","
-        "\"acc\":\"%016llX%016llX\",\"q\":\"%08X\",\"p\":\"%08X\",\"fd\":%u,"
-        "\"vfs\":\"%016llX%016llX\",\"vft\":\"%016llX%016llX\",\"vfd\":\"%016llX%016llX\","
-        "\"vis\":\"%08X\",\"vit\":\"%08X\",\"vstatus\":\"%08X\",\"vmac\":\"%08X\","
-        "\"vclip\":\"%08X\"}",
-        mnem.c_str(), c.pc, c.code,
-        (c.pc & 0x1FFFFFFF) < 0x02000000 ? getSymbols().resolve(c.pc & 0x1FFFFFFF).c_str() : "-",
-        (c.code >> 21) & 0x1F, (c.code >> 16) & 0x1F, static_cast<unsigned long long>(c.rsVal.hi),
-        static_cast<unsigned long long>(c.rsVal.lo), static_cast<unsigned long long>(c.rtVal.hi),
-        static_cast<unsigned long long>(c.rtVal.lo), c.fs, c.ft, c.fsVal, c.ftVal, c.pcAfter,
-        c.nested, static_cast<unsigned long long>(c.hiVal.hi),
-        static_cast<unsigned long long>(c.hiVal.lo), static_cast<unsigned long long>(c.loVal.hi),
-        static_cast<unsigned long long>(c.loVal.lo), c.saVal, c.fcr31Val, c.faccVal, c.faccFlagVal,
-        c.cop0StatusVal, static_cast<unsigned long long>(c.accVal.hi),
-        static_cast<unsigned long long>(c.accVal.lo), c.qVal, c.pVal, (c.code >> 6) & 0x1F,
-        static_cast<unsigned long long>(c.vfsVal.hi), static_cast<unsigned long long>(c.vfsVal.lo),
-        static_cast<unsigned long long>(c.vftVal.hi), static_cast<unsigned long long>(c.vftVal.lo),
-        static_cast<unsigned long long>(c.vfdVal.hi), static_cast<unsigned long long>(c.vfdVal.lo),
-        c.visVal, c.vitVal, c.vstatus, c.vmac, c.vclip);
-    std::fprintf(f, ",\"cop0\":[");
-    for (uint32_t i = 0; i < 32; i++) std::fprintf(f, "%s\"%08X\"", i ? "," : "", c.cop0In[i]);
-    std::fprintf(f, "]");
+    const bool inRam = (c.pc & 0x1FFFFFFF) < 0x02000000;
+    JsonObject row;
+    row.addString("mnemonic", mnem.c_str())
+        .addHexDigits("pc", c.pc, 8)
+        .addHexDigits("code", c.code, 8)
+        .addString("sym", inRam ? getSymbols().resolve(c.pc & 0x1FFFFFFF).c_str() : "-")
+        .addUint("rs", (c.code >> 21) & 0x1F)
+        .addUint("rt", (c.code >> 16) & 0x1F)
+        .addHex128("rsVal", c.rsVal.hi, c.rsVal.lo)
+        .addHex128("rtVal", c.rtVal.hi, c.rtVal.lo)
+        .addUint("fs", c.fs)
+        .addUint("ft", c.ft)
+        .addHexDigits("fsVal", c.fsVal, 8)
+        .addHexDigits("ftVal", c.ftVal, 8)
+        .addHexDigits("pcAfter", c.pcAfter, 8)
+        .addUint("nested", c.nested)
+        .beginObject("in")
+        .addHex128("hi", c.hiVal.hi, c.hiVal.lo)
+        .addHex128("lo", c.loVal.hi, c.loVal.lo)
+        .addHexDigits("sa", c.saVal, 8)
+        .addHexDigits("fcr31", c.fcr31Val, 8)
+        .addHexDigits("facc", c.faccVal, 8)
+        .addHexDigits("faccflag", c.faccFlagVal, 8)
+        .addHexDigits("cop0status", c.cop0StatusVal, 8)
+        .addHex128("acc", c.accVal.hi, c.accVal.lo)
+        .addHexDigits("q", c.qVal, 8)
+        .addHexDigits("p", c.pVal, 8)
+        .addUint("fd", (c.code >> 6) & 0x1F)
+        .addHex128("vfs", c.vfsVal.hi, c.vfsVal.lo)
+        .addHex128("vft", c.vftVal.hi, c.vftVal.lo)
+        .addHex128("vfd", c.vfdVal.hi, c.vfdVal.lo)
+        .addHexDigits("vis", c.visVal, 8)
+        .addHexDigits("vit", c.vitVal, 8)
+        .addHexDigits("vstatus", c.vstatus, 8)
+        .addHexDigits("vmac", c.vmac, 8)
+        .addHexDigits("vclip", c.vclip, 8)
+        .endObject()
+        .beginArray("cop0");
+    for (uint32_t i = 0; i < 32; i++) row.pushHexDigits(c.cop0In[i], 8);
+    row.endArray();
     if (c.hasMem) {
-        std::fprintf(f, ",\"memAddr\":\"%08X\",\"memRegion\":\"%s\"", c.memAddr, c.memRegion);
+        row.addHexDigits("memAddr", c.memAddr, 8).addString("memRegion", c.memRegion);
         if (c.memRam) {
-            std::fprintf(f, ",\"memWindow\":\"%08X\",\"memBefore\":\"", c.memWindow);
-            writeHex(f, c.memBefore);
-            std::fprintf(f, "\",\"memAfter\":\"");
-            writeHex(f, c.memAfter);
-            std::fprintf(f, "\"");
+            row.addHexDigits("memWindow", c.memWindow, 8)
+                .addString("memBefore", hexWindow(c.memBefore).c_str())
+                .addString("memAfter", hexWindow(c.memAfter).c_str());
         }
     }
     if (!c.accesses.empty()) {
-        std::fprintf(f, ",\"mem\":[");
-        for (size_t i = 0; i < c.accesses.size(); i++) {
-            const MemAccess& a = c.accesses[i];
-            std::fprintf(f, "%s{\"addr\":\"%08X\",\"size\":%u,\"value\":\"%llX\",\"read\":%s}",
-                         i ? "," : "", a.addr, a.size, static_cast<unsigned long long>(a.value),
-                         a.isRead ? "true" : "false");
+        row.beginArray("mem");
+        for (const MemAccess& a : c.accesses) {
+            row.beginObject()
+                .addHexDigits("addr", a.addr, 8)
+                .addUint("size", a.size)
+                .addHexDigits("value", a.value, 0)
+                .addBool("read", a.isRead)
+                .endObject();
         }
-        std::fprintf(f, "]");
+        row.endArray();
     }
-    std::fprintf(f, ",\"deltas\":[");
-    for (size_t i = 0; i < c.deltas.size(); i++) {
-        const RegDelta& d = c.deltas[i];
-        std::fprintf(f,
-                     "%s{\"file\":\"%s\",\"n\":%u,\"before\":\"%016llX%016llX\",\"after\":\"%"
-                     "016llX%016llX\"}",
-                     i ? "," : "", d.file, d.index, static_cast<unsigned long long>(d.before.hi),
-                     static_cast<unsigned long long>(d.before.lo),
-                     static_cast<unsigned long long>(d.after.hi),
-                     static_cast<unsigned long long>(d.after.lo));
+    row.beginArray("deltas");
+    for (const RegDelta& d : c.deltas) {
+        row.beginObject()
+            .addString("file", d.file)
+            .addUint("n", d.index)
+            .addHex128("before", d.before.hi, d.before.lo)
+            .addHex128("after", d.after.hi, d.after.lo)
+            .endObject();
     }
-    std::fprintf(f, "],\"synthetic\":%s}\n", synthetic ? "true" : "false");
-    if (synthetic) std::fprintf(f, "");
+    row.endArray().addBool("synthetic", synthetic);
+    const std::string text = row.take();
+    std::fwrite(text.data(), 1, text.size(), f);
 }
 void InsnTrace::write() {
     if (!isEnabled()) return;
@@ -511,10 +529,10 @@ void InsnTrace::write() {
         }
     }
 
-    if (FILE* g = std::fopen((dir + "/insn_forms.tsv").c_str(), "w")) {
-        std::fprintf(g, "mnemonic\tcases\n");
+    if (FILE* g = std::fopen((dir + "/insn_forms.jsonl").c_str(), "w")) {
+        JsonTable t(g, {"mnemonic", "cases"});
         for (const std::string& mnem : forms)
-            std::fprintf(g, "%s\t%zu\n", mnem.c_str(), mCases[mnem].size());
+            t.addString(mnem.c_str()).addUint(mCases[mnem].size()).endRow();
         std::fclose(g);
     }
 
