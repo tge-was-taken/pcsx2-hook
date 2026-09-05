@@ -10,9 +10,6 @@ import collections
 import pathlib
 import sys
 
-# Sonic and Shadow share the suite but are not targets; keep them out unless asked for.
-DISC_OF = {"p3": "SLUS-21621", "p4": "SLUS-21782", "sonic": "SLES-51950", "shadow": "SLUS-21261"}
-
 
 def readTsv(path):
     if not path.exists():
@@ -22,15 +19,14 @@ def readTsv(path):
         return [dict(zip(header, line.rstrip("\n").split("\t"))) for line in f if line.strip()]
 
 
-def sceneDisc(slug):
-    return DISC_OF.get(slug.split("-", 1)[0])
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("dirs", nargs="+", help="scene trace directories (and/or a boot trace directory)")
     ap.add_argument("--out", required=True, help="where to write the union")
-    ap.add_argument("--disc", default="SLUS-21621", help="only merge scenes from this disc")
+    # Trace directories from several discs can share a parent, and their coverage must not be
+    # unioned: the same address means different code. The prefix is whatever the caller names its
+    # scenes with, so "--disc p4" keeps p4-* and drops the rest.
+    ap.add_argument("--disc", help="only merge scenes whose directory name starts with this")
     args = ap.parse_args()
 
     out = pathlib.Path(args.out)
@@ -57,8 +53,7 @@ def main():
         if not path.is_dir():
             continue # a glob picks up the per-scene .log beside each directory
         slug = path.name
-        disc = sceneDisc(slug)
-        if disc is not None and disc != args.disc:
+        if args.disc and not slug.startswith(args.disc):
             continue
         rows = readTsv(path / "exec_coverage.tsv")
         if not rows:
@@ -113,7 +108,7 @@ def main():
             prios = ",".join(sorted(threadPrio[entry], key=int))
             f.write(f"{entry:08X}\t{len(threadScenes[entry])}\t{prios}\t{threadName[entry]}\n")
     # Same shape the runtime reads back as PCSX2HOOK_EXEC_TRACE_SITES.
-    with (out / f"sites-{args.disc}.tsv").open("w") as f:
+    with (out / f"sites-{args.disc or 'all'}.tsv").open("w") as f:
         f.write("site\tnum\n")
         for site in sorted(sites):
             f.write(f"{site:08X}\t{sites[site]}\n")
@@ -122,7 +117,7 @@ def main():
     print(f"{'scene':<28}{'covered':>9}{'new':>9}{'funcs':>8}{'syscalls':>10}")
     for slug, covered, new, nfuncs, nsys in perScene:
         print(f"{slug:<28}{covered:>9}{new:>9}{nfuncs:>8}{nsys:>10}")
-    print(f"\n{args.disc} union over {len(perScene)} traces: {len(coverage)} instructions, "
+    print(f"\n{args.disc or 'all'} union over {len(perScene)} traces: {len(coverage)} instructions, "
           f"{len(functions)} functions, {len(syscalls)} syscalls, {len(opcodes)} mnemonics, "
           f"{len(sites)} syscall sites, {len(threadScenes)} distinct threads")
 

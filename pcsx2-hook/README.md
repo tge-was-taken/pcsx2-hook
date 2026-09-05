@@ -59,7 +59,7 @@ per-instruction traces need the interpreter and are meant to run from a savestat
 | `pcsx2-hook/include/` | the public C API |
 | `pcsx2-hook/src/` | the library: host, traces, symbols |
 | `pcsx2-hook/tests/` | API tests, run by ctest |
-| `pcsx2-hook/scripts/` | analysis tools for what the traces write |
+| `pcsx2-hook/scripts/` | analysis tools for what the traces write (take paths, not a game) |
 | `pcsx2/Hooks.{h,cpp}` | the registry inside the emulator |
 
 ## Working on it
