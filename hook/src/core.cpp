@@ -227,6 +227,7 @@ bool Core::run(const VMBootParameters& params) {
     diag.getDraws().writeVuWatchTrace();
     diag.getDraws().writeVuJrTrace();
     diag.getDraws().writeVuExecTrace();
+    diag.getDraws().writeDrawProbe();
     VMManager::Shutdown(false);
     return true;
 }

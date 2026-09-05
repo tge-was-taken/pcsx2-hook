@@ -104,6 +104,7 @@ public:
     void onVu1Step(uint32_t addr, const uint32_t vf[32][4], const uint32_t vi[32],
                    const uint32_t acc[4], bool branchTaken, uint32_t branchTarget);
     void writeVuExecTrace();
+    void writeDrawProbe();
 
 private:
     void writeVuImages();
