@@ -389,8 +389,19 @@ uint32_t pcsx2hook_gs_standalone_frames(pcsx2hook_ctx* ctx) {
     return ctx ? Diagnostics::get().getGsDraws().getStandaloneFrames() : 0;
 }
 
-void pcsx2hook_gs_report_tracker(pcsx2hook_ctx* ctx, const char* reason) {
-    if (ctx) Diagnostics::get().getGsTracker().report(reason);
+void pcsx2hook_gs_report_tracker(pcsx2hook_ctx* ctx, const char* reason, const char* path) {
+    if (!ctx) return;
+    if (!path) {
+        Diagnostics::get().getGsTracker().report(reason, stderr);
+        return;
+    }
+    std::FILE* f = std::fopen(path, "ab");
+    if (!f) {
+        ctx->error = "cannot open the tracker report file";
+        return;
+    }
+    Diagnostics::get().getGsTracker().report(reason, f);
+    std::fclose(f);
 }
 
 size_t pcsx2hook_gs_take_capture(pcsx2hook_ctx* ctx, void* out, size_t size, uint32_t* width,

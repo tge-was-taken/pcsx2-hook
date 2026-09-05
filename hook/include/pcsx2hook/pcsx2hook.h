@@ -174,7 +174,9 @@ PCSX2HOOK_API void pcsx2hook_gs_set_deferred(pcsx2hook_ctx* ctx, int on);
 PCSX2HOOK_API void pcsx2hook_gs_arm_capture(pcsx2hook_ctx* ctx, int skip);
 PCSX2HOOK_API void pcsx2hook_gs_mark_capture_start(pcsx2hook_ctx* ctx);
 PCSX2HOOK_API uint32_t pcsx2hook_gs_standalone_frames(pcsx2hook_ctx* ctx);
-PCSX2HOOK_API void pcsx2hook_gs_report_tracker(pcsx2hook_ctx* ctx, const char* reason);
+// Appends to `path`, or writes to stderr when it is null.
+PCSX2HOOK_API void pcsx2hook_gs_report_tracker(pcsx2hook_ctx* ctx, const char* reason,
+	const char* path);
 
 // The captured GS frame buffer taken at the marked batch, as RGBA8. A null buffer asks for the size.
 PCSX2HOOK_API size_t pcsx2hook_gs_take_capture(pcsx2hook_ctx* ctx, void* out, size_t size,
