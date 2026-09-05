@@ -5,6 +5,9 @@
 #include "GS.h"
 #include "Gif_Unit.h"
 #include "Vif_Dma.h"
+#ifdef PCSX2HOOK
+#include "Hooks.h"
+#endif
 
 // A three-way toggle used to determine if the GIF is stalling (transferring) or done (finished).
 // Should be a gifstate_t rather then int, but I don't feel like possibly interfering with savestates right now.
@@ -465,6 +468,9 @@ void GIFdma()
 void dmaGIF()
 {
 	// DevCon.Warning("dmaGIFstart chcr = %lx, madr = %lx, qwc  = %lx\n tadr = %lx, asr0 = %lx, asr1 = %lx", gifch.chcr._u32, gifch.madr, gifch.qwc, gifch.tadr, gifch.asr0, gifch.asr1);
+#ifdef PCSX2HOOK
+	Hooks::OnDmaKick(2, cpuRegs.pc, gifch.madr, gifch.qwc);
+#endif
 
 	gif.gspath3done = false; // For some reason this doesn't clear? So when the system starts the thread, we will clear it :)
 	CPU_SET_DMASTALL(DMAC_GIF, false);

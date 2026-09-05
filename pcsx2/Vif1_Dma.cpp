@@ -5,6 +5,9 @@
 #include "GS.h"
 #include "Gif_Unit.h"
 #include "MTVU.h"
+#ifdef PCSX2HOOK
+#include "Hooks.h"
+#endif
 #include "VUmicro.h"
 #include "Vif_Dma.h"
 #include "Vif_Dynarec.h"
@@ -477,6 +480,9 @@ void dmaVIF1()
 			"        tadr = %lx, asr0 = %lx, asr1 = %lx",
 		vif1ch.chcr._u32, vif1ch.madr, vif1ch.qwc,
 		vif1ch.tadr, vif1ch.asr0, vif1ch.asr1);
+#ifdef PCSX2HOOK
+	Hooks::OnDmaKick(1, cpuRegs.pc, vif1ch.madr, vif1ch.qwc);
+#endif
 
 	g_vif1Cycles = 0;
 	vif1.inprogress = 0;
