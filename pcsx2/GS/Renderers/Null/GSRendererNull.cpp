@@ -20,3 +20,12 @@ GSTexture* GSRendererNull::GetOutput(int i, float& scale, int& y_offset)
 {
 	return nullptr;
 }
+
+#ifdef PCSX2HOOK
+// GSState's default aborts; nothing is rasterized here, so AA1 coverage alpha never applies.
+bool GSRendererNull::IsCoverageAlphaSupported()
+{
+	return false;
+}
+
+#endif
