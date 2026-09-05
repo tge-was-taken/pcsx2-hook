@@ -7,6 +7,9 @@
 #include "GS.h"
 #include "Gif_Unit.h"
 #include "MTVU.h"
+#ifdef PCSX2HOOK
+#include "Hooks.h"
+#endif
 
 #include <cfenv>
 
@@ -35,6 +38,10 @@ static void _vu1Exec(VURegs* VU)
 	_VURegsNum uregs;
 	u32* ptr;
 
+#ifdef PCSX2HOOK
+	// this instruction's own index, read before TPC advances past it below.
+	const u32 hookStepAddr = (VU->VI[REG_TPC].UL & 0x3fff) >> 3;
+#endif
 	ptr = (u32*)&VU->Micro[VU->VI[REG_TPC].UL];
 	VU->VI[REG_TPC].UL += 8;
 
@@ -169,6 +176,32 @@ static void _vu1Exec(VURegs* VU)
 	_vuAddUpperStalls(VU, &uregs);
 	_vuAddLowerStalls(VU, &lregs);
 
+#ifdef PCSX2HOOK
+	// full register file right after this step, before the branch delay countdown below
+	// consumes VU->branch. A conditional branch that evaluates false never sets it, so this doubles as
+	// "was this step a taken branch or jump" with no per-opcode detection.
+	if (Hooks::HasVu1StepSink())
+	{
+		Hooks::Vu1Step hookStep{};
+		hookStep.addr = hookStepAddr;
+		for (int hookReg = 0; hookReg < 32; hookReg++)
+		{
+			hookStep.vf[hookReg][0] = VU->VF[hookReg].UL[0];
+			hookStep.vf[hookReg][1] = VU->VF[hookReg].UL[1];
+			hookStep.vf[hookReg][2] = VU->VF[hookReg].UL[2];
+			hookStep.vf[hookReg][3] = VU->VF[hookReg].UL[3];
+			hookStep.vi[hookReg] = VU->VI[hookReg].UL;
+		}
+		hookStep.acc[0] = VU->ACC.UL[0];
+		hookStep.acc[1] = VU->ACC.UL[1];
+		hookStep.acc[2] = VU->ACC.UL[2];
+		hookStep.acc[3] = VU->ACC.UL[3];
+		hookStep.branchTaken = VU->branch > 0;
+		hookStep.branchTarget = (VU->branchpc & 0x3fff) >> 3;
+		Hooks::OnVu1Step(hookStep);
+	}
+
+#endif
 	if (VU->branch > 0)
 	{
 		if (VU->branch-- == 1)
