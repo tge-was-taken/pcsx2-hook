@@ -6,6 +6,9 @@
 #include "R3000A.h"
 #include "Common.h"
 #include "Sif.h"
+#ifdef PCSX2HOOK
+#include "Hooks.h"
+#endif
 #include "IopHw.h"
 
 _sif sif0;
@@ -38,6 +41,10 @@ static __fi bool WriteFifoToEE()
 	}
 
 	sif0.fifo.read((u32*)ptag, readSize << 2);
+#ifdef PCSX2HOOK
+	// IOP -> EE payload, after the FIFO has filled the EE buffer.
+	Hooks::OnSifTransfer(0, true, sif0ch.madr, readSize, (const u32*)ptag, readSize << 2);
+#endif
 
 	// Clearing handled by vtlb memory protection and manual blocks.
 	//Cpu->Clear(sif0ch.madr, readSize*4);
@@ -342,6 +349,9 @@ __fi void  EEsif0Interrupt()
 
 __fi void dmaSIF0()
 {
+#ifdef PCSX2HOOK
+	Hooks::OnSifKick(0); // attribute to the guest code that kicked it
+#endif
 	SIF_LOG("dmaSIF0 %s", sif0ch.cmqt_to_str().c_str());
 
 	if (sif0.fifo.readPos != sif0.fifo.writePos)

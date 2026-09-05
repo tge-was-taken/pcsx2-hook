@@ -6,6 +6,9 @@
 #include "R3000A.h"
 #include "Common.h"
 #include "Sif.h"
+#ifdef PCSX2HOOK
+#include "Hooks.h"
+#endif
 #include "IopHw.h"
 
 _sif sif1;
@@ -38,6 +41,10 @@ static __fi bool WriteEEtoFifo()
 		return false;
 	}
 
+#ifdef PCSX2HOOK
+	// EE -> IOP payload, read before the FIFO consumes it.
+	Hooks::OnSifTransfer(1, false, sif1ch.madr, writeSize, (const u32*)ptag, writeSize << 2);
+#endif
 	sif1.fifo.write((u32*)ptag, writeSize << 2);
 
 	sif1ch.madr += writeSize << 4;
@@ -318,6 +325,9 @@ __fi void  EEsif1Interrupt()
 // Main difference is this checks for iop, where psxDma10 checks for ee.
 __fi void dmaSIF1()
 {
+#ifdef PCSX2HOOK
+	Hooks::OnSifKick(1); // attribute to the guest code that kicked it
+#endif
 	SIF_LOG("dmaSIF1 %s", sif1ch.cmqt_to_str().c_str());
 
 	if (sif1.fifo.readPos != sif1.fifo.writePos)
