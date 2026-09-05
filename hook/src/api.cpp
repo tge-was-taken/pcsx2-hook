@@ -9,14 +9,14 @@
 #include <vector>
 
 #include "common/Error.h"
-#include "config.h"
-#include "core.h"
-#include "diagnostics.h"
+#include "pcsx2hook/config.h"
+#include "pcsx2hook/core.h"
+#include "pcsx2hook/diagnostics.h"
 #include "pcsx2/Hooks.h"
 #include "pcsx2/MTGS.h"
 #include "pcsx2/VMManager.h"
 #include "Memory.h"
-#include "symbols.h"
+#include "pcsx2hook/symbols.h"
 
 using namespace pcsx2hook;
 

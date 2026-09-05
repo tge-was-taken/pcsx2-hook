@@ -3,17 +3,17 @@
 
 #pragma once
 
-#include "trace/api_trace.h"
-#include "trace/draw_context.h"
-#include "trace/dump_dir.h"
-#include "trace/exec_trace.h"
-#include "trace/gs_draws.h"
-#include "trace/gs_tracker.h"
-#include "trace/hw_trace.h"
-#include "trace/insn_trace.h"
-#include "trace/iop_trace.h"
-#include "trace/sif_trace.h"
-#include "trace/vif_trace.h"
+#include "pcsx2hook/trace/api_trace.h"
+#include "pcsx2hook/trace/draw_context.h"
+#include "pcsx2hook/trace/dump_dir.h"
+#include "pcsx2hook/trace/exec_trace.h"
+#include "pcsx2hook/trace/gs_draws.h"
+#include "pcsx2hook/trace/gs_tracker.h"
+#include "pcsx2hook/trace/hw_trace.h"
+#include "pcsx2hook/trace/insn_trace.h"
+#include "pcsx2hook/trace/iop_trace.h"
+#include "pcsx2hook/trace/sif_trace.h"
+#include "pcsx2hook/trace/vif_trace.h"
 
 namespace pcsx2hook {
 

@@ -5,7 +5,7 @@
 set -u
 cd "$(dirname "$0")/.."
 
-inc=(-Ihook/src -Ihook/src/trace -Ihook/include -Ihook/stubs -I. -Ipcsx2 -Icommon
+inc=(-Ihook/src -Ihook/src/pcsx2hook -Ihook/src/pcsx2hook/trace -Ihook/include -Ihook/stubs -I. -Ipcsx2 -Icommon
      -I3rdparty/fmt/include -I3rdparty/include -I3rdparty/imgui/include
      -I3rdparty/rapidjson/include -I3rdparty/simpleini/include -I3rdparty/fast_float/include)
 

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2002-2026 PCSX2 Dev Team
 // SPDX-License-Identifier: GPL-3.0+
 
-#include "vif_trace.h"
+#include "pcsx2hook/trace/vif_trace.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -9,9 +9,9 @@
 #include <string>
 #include <vector>
 
-#include "config.h"
-#include "diagnostics.h"
-#include "dump_dir.h"
+#include "pcsx2hook/config.h"
+#include "pcsx2hook/diagnostics.h"
+#include "pcsx2hook/trace/dump_dir.h"
 
 namespace pcsx2hook {
 namespace {

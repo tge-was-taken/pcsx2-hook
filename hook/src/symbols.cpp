@@ -1,14 +1,14 @@
 // SPDX-FileCopyrightText: 2002-2026 PCSX2 Dev Team
 // SPDX-License-Identifier: GPL-3.0+
 
-#include "symbols.h"
+#include "pcsx2hook/symbols.h"
 
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
 
-#include "config.h"
+#include "pcsx2hook/config.h"
 
 namespace pcsx2hook {
 namespace {

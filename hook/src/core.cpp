@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2002-2026 PCSX2 Dev Team
 // SPDX-License-Identifier: GPL-3.0+
 
-#include "core.h"
+#include "pcsx2hook/core.h"
 
 #include <cstdio>
 #include <filesystem>
@@ -12,8 +12,8 @@
 #include "common/Console.h"
 #include "common/Error.h"
 #include "common/MemorySettingsInterface.h"
-#include "config.h"
-#include "diagnostics.h"
+#include "pcsx2hook/config.h"
+#include "pcsx2hook/diagnostics.h"
 #include "fmt/format.h"
 #include "pcsx2/CDVD/CDVD.h"
 #include "pcsx2/GS.h"
@@ -21,7 +21,7 @@
 #include "pcsx2/SIO/Pad/Pad.h"
 #include "pcsx2/SIO/Pad/PadDualshock2.h"
 #include "pcsx2/VMManager.h"
-#include "symbols.h"
+#include "pcsx2hook/symbols.h"
 
 namespace pcsx2hook {
 namespace {

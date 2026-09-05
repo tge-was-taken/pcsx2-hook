@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2002-2026 PCSX2 Dev Team
 // SPDX-License-Identifier: GPL-3.0+
 
-#include "iop_trace.h"
+#include "pcsx2hook/trace/iop_trace.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -17,9 +17,9 @@
 #include "DebugTools/Debug.h"
 #include "IopMem.h"
 #include "R3000A.h"
-#include "config.h"
-#include "diagnostics.h"
-#include "dump_dir.h"
+#include "pcsx2hook/config.h"
+#include "pcsx2hook/diagnostics.h"
+#include "pcsx2hook/trace/dump_dir.h"
 #include "pcsx2/Hooks.h"
 
 namespace pcsx2hook {

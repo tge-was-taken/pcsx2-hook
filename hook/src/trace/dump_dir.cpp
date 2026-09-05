@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: 2002-2026 PCSX2 Dev Team
 // SPDX-License-Identifier: GPL-3.0+
 
-#include "dump_dir.h"
+#include "pcsx2hook/trace/dump_dir.h"
 
 #include <cstdlib>
 #include <filesystem>
 
-#include "config.h"
+#include "pcsx2hook/config.h"
 
 namespace pcsx2hook {
 

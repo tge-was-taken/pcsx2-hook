@@ -21,7 +21,8 @@ add_library(pcsx2hook SHARED
 
 target_include_directories(pcsx2hook
 	PUBLIC include
-	PRIVATE src src/trace
+	PUBLIC src
+	PRIVATE src/trace
 	# The "pcsx2/" and "common/" include prefixes the emulator sources use.
 	PRIVATE ${PROJECT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/pcsx2)
 
