@@ -4,6 +4,9 @@
 #include "ImGui/FullscreenUI.h"
 #include "ImGui/ImGuiManager.h"
 #include "GS/Renderers/Common/GSRenderer.h"
+#ifdef PCSX2HOOK
+#include "Hooks.h"
+#endif
 #include "GS/GSCapture.h"
 #include "GS/GSDump.h"
 #include "GS/GSGL.h"
@@ -578,7 +581,13 @@ void GSRenderer::EndPresentFrame()
 }
 
 void GSRenderer::VSync(u32 field, bool registers_written, bool idle_frame)
+#ifdef PCSX2HOOK
+{ // The frame boundary as the GS thread sees it. Arming the trace from the EE thread
+	// races the MTGS ring, so every draw is stamped with this counter and selected exactly instead.
+	Hooks::OnGsVSync();
+#else
 {
+#endif
 	if (GSConfig.ShouldDump(s_n, g_perfmon.GetFrame()))
 	{
 		if (GSConfig.SaveInfo)

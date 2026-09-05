@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: GPL-3.0+
 
 #include "GS/GSState.h"
+#ifdef PCSX2HOOK
+#include "Hooks.h"
+#endif
 #include "GS/GSDump.h"
 #include "GS/GSGL.h"
 #include "GS/GSPerfMon.h"
@@ -2500,7 +2503,91 @@ void GSState::FlushPrim()
 {
 	if (m_index->tail > 0)
 	{
+#ifdef PCSX2HOOK
+		GL_REG("FlushPrim ctxt %d", PRIM->CTXT); // Ground truth for a render comparison: the resolved register state this batch will
+		// rasterize with, downstream of VU1 so the vertex colour is the post-lighting one.
+		// XY is 12.4 fixed point biased by XYOFFSET, so this is the batch's rect in screen pixels.
+		Hooks::GsDraw hookDraw{};
+		hookDraw.bbox[0] = hookDraw.bbox[1] = 1e9f;
+		hookDraw.bbox[2] = hookDraw.bbox[3] = -1e9f;
+		hookDraw.zMin = ~0u;
+		for (u32 hookI = 0; hookI < m_index->tail; hookI++)
+		{
+			const GSVertex& hookV = m_vertex->buff[m_index->buff[hookI]];
+			const float hookX = (static_cast<float>(hookV.XYZ.X) - m_context->XYOFFSET.OFX) / 16.0f;
+			const float hookY = (static_cast<float>(hookV.XYZ.Y) - m_context->XYOFFSET.OFY) / 16.0f;
+			hookDraw.bbox[0] = std::min(hookDraw.bbox[0], hookX);
+			hookDraw.bbox[1] = std::min(hookDraw.bbox[1], hookY);
+			hookDraw.bbox[2] = std::max(hookDraw.bbox[2], hookX);
+			hookDraw.bbox[3] = std::max(hookDraw.bbox[3], hookY);
+			hookDraw.zMin = std::min(hookDraw.zMin, hookV.XYZ.Z);
+			hookDraw.zMax = std::max(hookDraw.zMax, hookV.XYZ.Z);
+		}
+		hookDraw.prim = PRIM->U64 | (u64(m_env.PRMODECONT.AC) << 32);
+		hookDraw.tex0 = m_context->TEX0.U64;
+		hookDraw.tex1 = m_context->TEX1.U64;
+		hookDraw.clamp = m_context->CLAMP.U64;
+		hookDraw.test = m_context->TEST.U64;
+		hookDraw.alpha = m_context->ALPHA.U64;
+		hookDraw.frame = m_context->FRAME.U64;
+		hookDraw.scissor = m_context->SCISSOR.U64;
+		hookDraw.zbuf = m_context->ZBUF.U64;
+		hookDraw.rgbaq = m_vertex->buff[0].RGBAQ.U32[0];
+		hookDraw.nverts = static_cast<u32>(m_index->tail);
+		hookDraw.fog = m_vertex->buff[0].FOG;
+		hookDraw.q = m_vertex->buff[0].RGBAQ.Q;
+		hookDraw.pabe = m_draw_env->PABE.PABE;
+		hookDraw.colclamp = m_draw_env->COLCLAMP.CLAMP;
+		hookDraw.fba = m_context->FBA.FBA;
+		hookDraw.dthe = m_draw_env->DTHE.DTHE;
+		// Let a sink read the buffer this batch is about to draw into, so it can dump the emulated
+		// frame between batches. Only the three colour formats a frame buffer can be.
+		struct HookFbRead
+		{
+			GSState* state;
+			const GSLocalMemory* mem;
+			u32 fbp, fbw, psm;
+		};
+		// Static because the sink reads the finished frame at the next vsync, long after this returns.
+		static thread_local HookFbRead hookFb;
+		hookFb = HookFbRead{this, &m_mem, m_context->FRAME.Block(), m_context->FRAME.FBW,
+			m_context->FRAME.PSM};
+		hookDraw.readCtx = &hookFb;
+		const GSVector2i hookRes = PCRTCDisplays.GetResolution();
+		hookDraw.dispW = u32(hookRes.x);
+		hookDraw.dispH = u32(hookRes.y);
+		hookDraw.dispFbp0 = PCRTCDisplays.PCRTCDisplays[0].enabled
+								 ? u32(PCRTCDisplays.PCRTCDisplays[0].Block())
+								 : ~0u;
+		hookDraw.dispFbp1 = PCRTCDisplays.PCRTCDisplays[1].enabled
+								 ? u32(PCRTCDisplays.PCRTCDisplays[1].Block())
+								 : ~0u;
+		// Invalidating the frame buffer's own pages is what drains the software rasterizer's worker
+		// threads, so a read afterwards holds every batch before this one and no part of a later one.
+		hookDraw.syncPixels = [](const void* ctx) {
+			const HookFbRead* fb = static_cast<const HookFbRead*>(ctx);
+			GIFRegBITBLTBUF hookBuf = {};
+			hookBuf.SBP = fb->fbp;
+			hookBuf.SBW = fb->fbw;
+			hookBuf.SPSM = fb->psm;
+			fb->state->InvalidateLocalMem(hookBuf, GSVector4i(0, 0, int(fb->fbw) * 64, 2048));
+		};
+		hookDraw.readPixel = [](const void* ctx, int x, int y) -> u32 {
+			const HookFbRead* fb = static_cast<const HookFbRead*>(ctx);
+			switch (fb->psm)
+			{
+				case PSMCT24: return fb->mem->ReadFrame24(x, y, fb->fbp, fb->fbw);
+				case PSMCT16: return fb->mem->ReadFrame16(x, y, fb->fbp, fb->fbw);
+				// Its own address function, not a colour variant of PSMCT16: sharing one scrambled
+				// every PAL frame buffer into blocks.
+				case PSMCT16S: return fb->mem->ReadFrame16S(x, y, fb->fbp, fb->fbw);
+				default: return fb->mem->ReadPixel32(x, y, fb->fbp, fb->fbw);
+			}
+		};
+		Hooks::OnGsDraw(hookDraw);
+#else
 		GL_REG("FlushPrim ctxt %d", PRIM->CTXT);
+#endif
 
 		// clear texture cache flushed flag, since we're reading from it
 		m_texflush_flag = PRIM->TME ? false : m_texflush_flag;
