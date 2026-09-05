@@ -177,7 +177,15 @@ static void execI()
 	cpuRegs.pc += 4;
 
 	// interprete instruction
+#ifdef PCSX2HOOK
+	// An instruction fetch is not a data access; without this the delay slot's fetch is recorded
+	// against the branch whose interpret() ran it.
+	Hooks::SetMemTraceSuppressed(true);
+#endif
 	cpuRegs.code = memRead32( pc );
+#ifdef PCSX2HOOK
+	Hooks::SetMemTraceSuppressed(false);
+#endif
 
 	const OPCODE& opcode = GetCurrentInstruction();
 #if 0

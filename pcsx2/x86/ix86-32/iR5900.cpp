@@ -2284,6 +2284,16 @@ static bool recSkipTimeoutLoop(s32 reg, bool is_timeout_loop)
 
 static void recRecompile(const u32 startpc)
 {
+#ifdef PCSX2HOOK
+	// The recompiler reads guest code through memRead32 while compiling, which a data-access trace
+	// would otherwise record as the running function's reads. Suppressed for the compile only.
+	struct CompileGuard
+	{
+		CompileGuard() { Hooks::SetMemTraceSuppressed(true); }
+		~CompileGuard() { Hooks::SetMemTraceSuppressed(false); }
+	} compileGuard;
+
+#endif
 	u32 i = 0;
 	u32 willbranch3 = 0;
 
