@@ -70,6 +70,10 @@ void GSRendererSW::Destroy()
 
 void GSRendererSW::VSync(u32 field, bool registers_written, bool idle_frame)
 {
+#ifdef PCSX2HOOK
+	if (std::getenv("PCSX2HOOK_SW_SEL"))
+		fprintf(stderr, "[swsel] --- vsync\n");
+#endif
 	Sync(0); // IncAge might delete a cached texture in use
 
 	/*
@@ -1515,6 +1519,18 @@ bool GSRendererSW::GetScanlineGlobalData(SharedData* data)
 		gd.zm |= GSVector4i::xffff0000();
 	}
 
+#endif
+
+#ifdef PCSX2HOOK
+	if (const char* hookSel = std::getenv("PCSX2HOOK_SW_SEL"))
+	{
+		static int hookBatch = 0;
+		int hookFirst = std::atoi(hookSel);
+		const char* hookDash = std::strchr(hookSel, '-');
+		if (hookBatch >= hookFirst && hookBatch <= (hookDash ? std::atoi(hookDash + 1) : hookFirst))
+			fprintf(stderr, "[swsel] %d %s\n", hookBatch, gd.sel.to_string().c_str());
+		hookBatch++;
+	}
 #endif
 
 	if (gd.sel.prim == GS_SPRITE_CLASS && !gd.sel.ftest && !gd.sel.ztest && data->bbox.eq(data->bbox.rintersect(data->scissor))) // TODO: check scissor horizontally only
