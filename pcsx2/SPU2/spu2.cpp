@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: GPL-3.0+
 
 #include "SPU2/spu2.h"
+#ifdef PCSX2HOOK
+#include "Hooks.h"
+#endif
 #include "SPU2/defs.h"
 #include "SPU2/Debug.h"
 #include "SPU2/Dma.h"
@@ -387,7 +390,11 @@ void SPU2async()
 
 u16 SPU2read(u32 rmem)
 {
+#ifdef PCSX2HOOK
+	Hooks::OnHwAccess(true, rmem, 0, 2, true); // u16 ret = 0xDEAD;
+#else
 	u16 ret = 0xDEAD;
+#endif
 	u32 core = 0;
 	const u32 mem = rmem & 0xFFFF;
 	u32 omem = mem;
@@ -439,6 +446,9 @@ u16 SPU2read(u32 rmem)
 
 void SPU2write(u32 rmem, u16 value)
 {
+#ifdef PCSX2HOOK
+	Hooks::OnHwAccess(true, rmem, value, 2, false); // SPU2 is not on the IOP hw page
+#endif
 	// Note: Reverb/Effects are very sensitive to having precise update timings.
 	// If the SPU2 isn't in in sync with the IOP, samples can end up playing at rather
 	// incorrect pitches and loop lengths.

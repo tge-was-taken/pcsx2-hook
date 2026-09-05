@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: GPL-3.0+
 
 #pragma once
+#ifdef PCSX2HOOK
+
+#include "Hooks.h"
+#endif
 
 #include "Common.h"
 #include "IopHw.h"
@@ -196,6 +200,11 @@ static __ri const char* _ioplog_GetHwName( u32 addr, T val )
 template< typename T>
 static __ri void IopHwTraceLog( u32 addr, T val, bool mode )
 {
+#ifdef PCSX2HOOK
+	// the IOP half of the same tap.
+	if (Hooks::HasHwAccessSink())
+		Hooks::OnHwAccess(true, addr, static_cast<u64>(val), sizeof(T), mode);
+#endif
 	if (!IsDevBuild) return;
 	if (!EmuConfig.Trace.Enabled) return;
 

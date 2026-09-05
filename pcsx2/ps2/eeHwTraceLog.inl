@@ -1,3 +1,6 @@
+#ifdef PCSX2HOOK
+#include "Hooks.h"
+#endif
 // SPDX-FileCopyrightText: 2002-2026 PCSX2 Dev Team
 // SPDX-License-Identifier: GPL-3.0+
 
@@ -255,6 +258,18 @@ static __ri const char* _eelog_GetHwName( u32 addr, T val )
 template< typename T>
 static __ri void eeHwTraceLog( u32 addr, T val, bool mode )
 {
+#ifdef PCSX2HOOK
+	// before the dev-build gate, so a release build still sees every register access.
+	if (Hooks::HasHwAccessSink())
+	{
+		u64 hookVal = 0;
+		if constexpr (sizeof(T) <= 8)
+			hookVal = static_cast<u64>(val);
+		else
+			hookVal = r128_to_u128(val).lo; // a 128-bit access reports its low half
+		Hooks::OnHwAccess(false, addr, hookVal, sizeof(T), mode);
+	}
+#endif
 	if (!IsDevBuild) return;
 	if (!EmuConfig.Trace.Enabled) return;
 	if (!_eelog_enabled(addr)) return;
