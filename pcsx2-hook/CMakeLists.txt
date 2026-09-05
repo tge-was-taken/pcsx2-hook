@@ -45,3 +45,13 @@ add_executable(pcsx2hook_api_test tests/api_test.c)
 target_link_libraries(pcsx2hook_api_test PRIVATE pcsx2hook)
 set_target_properties(pcsx2hook_api_test PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
 add_test(NAME pcsx2hook_api COMMAND pcsx2hook_api_test)
+
+# A real boot, skipped unless PCSX2HOOK_TEST_BIOS and PCSX2HOOK_TEST_IMAGE point at a BIOS folder and
+# something to boot. Separate from the test above because the library keeps process-global state, so
+# a process drives one context.
+add_test(NAME pcsx2hook_boot COMMAND pcsx2hook_api_test boot)
+
+# The emulator looks for resources/ beside the running binary, so the test needs its own link.
+add_custom_command(TARGET pcsx2hook_api_test POST_BUILD
+	COMMAND ${CMAKE_COMMAND} -E create_symlink
+		"${PROJECT_SOURCE_DIR}/bin/resources" "$<TARGET_FILE_DIR:pcsx2hook_api_test>/resources")

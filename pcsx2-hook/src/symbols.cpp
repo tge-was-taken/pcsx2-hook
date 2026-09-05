@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 
 #include "config.h"
@@ -49,16 +50,22 @@ void Symbols::load() {
     if (mTried) return;
     mTried = true;
 
+    // A directory rather than a file lets one host carry a map per disc and pick by serial, which
+    // is what a multi-disc run needs; the library has no layout of its own to fall back on.
     std::string path;
-    if (const char* env = Config::get().getValue("PCSX2HOOK_SYMBOLS"))
-        path = env;
-    else if (const std::string elf = getElfName(mSerial);
-             !elf.empty() && std::ifstream("assets/" + elf + ".map"))
-        path = "assets/" + elf + ".map";
-    else {
+    if (const char* env = Config::get().getValue("PCSX2HOOK_SYMBOLS")) {
+        std::error_code ec;
+        if (std::filesystem::is_directory(env, ec)) {
+            const std::string elf = getElfName(mSerial);
+            if (!elf.empty()) path = (std::filesystem::path(env) / (elf + ".map")).string();
+        } else {
+            path = env;
+        }
+    }
+    if (path.empty()) {
         std::fprintf(stderr,
-                     "[eesym] no symbol map for %s (PCs will be raw); drop one at "
-                     "assets/%s.map or set PCSX2HOOK_SYMBOLS\n",
+                     "[eesym] no symbol map for %s (PCs will be raw); point PCSX2HOOK_SYMBOLS at a "
+                     ".map file or at a directory holding %s.map\n",
                      mSerial.c_str(), getElfName(mSerial).c_str());
         return;
     }

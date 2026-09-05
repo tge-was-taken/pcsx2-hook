@@ -26,7 +26,7 @@ pcsx2hook_ctx* ctx = pcsx2hook_create(&config);
 pcsx2hook_early_init(ctx);
 pcsx2hook_init(ctx, argc, argv);
 pcsx2hook_apply_settings(ctx);
-pcsx2hook_trace_arm(ctx, PCSX2HOOK_TRACE_GS);
+pcsx2hook_arm_trace(ctx, PCSX2HOOK_TRACE_GS);
 pcsx2hook_start(ctx);
 while (!pcsx2hook_is_finished(ctx)) { /* your event pump */ }
 pcsx2hook_join(ctx);

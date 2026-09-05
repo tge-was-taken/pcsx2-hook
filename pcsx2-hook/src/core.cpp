@@ -87,13 +87,12 @@ std::vector<std::tuple<uint32_t, int, uint32_t>> loadAutopressScript(const std::
 }  // namespace
 
 void Core::applyBiosFolders(MemorySettingsInterface& si) {
-    if (const char* dir = Config::get().getValue("PCSX2HOOK_BIOSDIR")) {
-        // Absolute: the emulator resolves a relative Folders path against its own data root, not
-        // the working directory the run was started from.
-        si.SetStringValue("Folders", "Bios", std::filesystem::absolute(dir).string().c_str());
-    }
-    if (const char* file = Config::get().getValue("PCSX2HOOK_BIOS")) {
-        si.SetStringValue("Filenames", "BIOS", file);
+    if (const char* bios = Config::get().getValue("PCSX2HOOK_BIOS")) {
+        // The emulator wants the folder and the file name separately, and resolves a relative
+        // Folders path against its own data root rather than the working directory.
+        const std::filesystem::path path = std::filesystem::absolute(bios);
+        si.SetStringValue("Folders", "Bios", path.parent_path().string().c_str());
+        si.SetStringValue("Filenames", "BIOS", path.filename().string().c_str());
     }
     if (const char* patches = Config::get().getValue("PCSX2HOOK_PATCHES")) {
         // Absolute: a relative Folders path resolves against the emulator's data root, not the cwd.
