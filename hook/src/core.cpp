@@ -234,6 +234,7 @@ bool Core::run(const VMBootParameters& params) {
 
 void Core::onFrame() {
     mFrameCount++;
+    onFrameExtra(mFrameCount);
 
     if (mAutopress && !mAutopressScript.empty()) {
         bool held[kPadButtonCount] = {};
