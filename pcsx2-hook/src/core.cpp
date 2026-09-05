@@ -87,14 +87,15 @@ std::vector<std::tuple<uint32_t, int, uint32_t>> loadAutopressScript(const std::
 }  // namespace
 
 void Core::applyBiosFolders(MemorySettingsInterface& si) {
-    if (const char* bios = Config::get().getValue("PCSX2HOOK_BIOS")) {
+    const Config& cfg = Config::get();
+    if (const char* bios = cfg.getValue("PCSX2HOOK_BIOS")) {
         // The emulator wants the folder and the file name separately, and resolves a relative
         // Folders path against its own data root rather than the working directory.
         const std::filesystem::path path = std::filesystem::absolute(bios);
         si.SetStringValue("Folders", "Bios", path.parent_path().string().c_str());
         si.SetStringValue("Filenames", "BIOS", path.filename().string().c_str());
     }
-    if (const char* patches = Config::get().getValue("PCSX2HOOK_PATCHES")) {
+    if (const char* patches = cfg.getValue("PCSX2HOOK_PATCHES")) {
         // Absolute: a relative Folders path resolves against the emulator's data root, not the cwd.
         si.SetStringValue("Folders", "Patches",
                           std::filesystem::absolute(patches).string().c_str());
@@ -103,23 +104,24 @@ void Core::applyBiosFolders(MemorySettingsInterface& si) {
 }
 
 void Core::applyHeadlessSettings(MemorySettingsInterface& si) {
+    const Config& cfg = Config::get();
     // Software by default: the hardware backends approximate the GS, so only this one is a
     // reference. Null drops rasterization entirely and fills no frame buffer.
-    const bool nullGs = Config::get().isSet("PCSX2HOOK_NULLGS");
+    const bool nullGs = cfg.isSet("PCSX2HOOK_NULLGS");
     si.SetIntValue("EmuCore/GS", "Renderer",
                    static_cast<int>(nullGs                                  ? GSRendererType::Null
-                                    : Config::get().isSet("PCSX2HOOK_HWGS") ? GSRendererType::VK
+                                    : cfg.isSet("PCSX2HOOK_HWGS") ? GSRendererType::VK
                                                                             : GSRendererType::SW));
 
     si.SetBoolValue("EmuCore/Speedhacks", "vuThread", false);
-    if (!Config::get().isSet("PCSX2HOOK_SOUND")) {
+    if (!cfg.isSet("PCSX2HOOK_SOUND")) {
         si.SetStringValue("SPU2/Output", "Backend", "Null");
     }
 
     si.SetBoolValue("Logging", "EnableEEConsole", true);
     si.SetBoolValue("Logging", "EnableIOPConsole", true);
 
-    if (Config::get().isSet("PCSX2HOOK_INTERP")) {
+    if (cfg.isSet("PCSX2HOOK_INTERP")) {
         si.SetBoolValue("EmuCore/CPU/Recompiler", "EnableEE", false);
         si.SetBoolValue("EmuCore/CPU/Recompiler", "EnableIOP", false);
         si.SetBoolValue("EmuCore/CPU/Recompiler", "EnableVU0", false);
@@ -127,10 +129,10 @@ void Core::applyHeadlessSettings(MemorySettingsInterface& si) {
     }
     // VU1 alone keeps the EE recompiler's idle-loop skip, so a savestate boot still reaches its
     // target frame quickly while hooks that only the interpreter calls back into still fire.
-    if (Config::get().isSet("PCSX2HOOK_VU1_INTERP")) {
+    if (cfg.isSet("PCSX2HOOK_VU1_INTERP")) {
         si.SetBoolValue("EmuCore/CPU/Recompiler", "EnableVU1", false);
     }
-    if (Config::get().isSet("PCSX2HOOK_NOFASTMEM")) {
+    if (cfg.isSet("PCSX2HOOK_NOFASTMEM")) {
         si.SetBoolValue("EmuCore/CPU/Recompiler", "EnableFastmem", false);
     }
 
@@ -138,7 +140,8 @@ void Core::applyHeadlessSettings(MemorySettingsInterface& si) {
 }
 
 bool Core::configureBoot(VMBootParameters& params) {
-    if (Config::get().isSet("PCSX2HOOK_NODISC")) {
+    const Config& cfg = Config::get();
+    if (cfg.isSet("PCSX2HOOK_NODISC")) {
         params.source_type = CDVD_SourceType::NoDisc;
         params.filename.clear();
         return true;
@@ -148,10 +151,10 @@ bool Core::configureBoot(VMBootParameters& params) {
         return false;
     }
     params.source_type = CDVD_SourceType::Iso;
-    params.fast_boot = !Config::get().isSet("PCSX2HOOK_FULLBOOT");
+    params.fast_boot = !cfg.isSet("PCSX2HOOK_FULLBOOT");
     // The engine restores a savestate at the right point, unlike a mid-frame LoadState, which
     // corrupts the recompiler and TLB.
-    if (const char* ls = Config::get().getValue("PCSX2HOOK_STATE")) {
+    if (const char* ls = cfg.getValue("PCSX2HOOK_STATE")) {
         params.save_state = ls;
     }
     return true;
@@ -168,6 +171,7 @@ bool Core::run(const VMBootParameters& params) {
     mDiscSerial = VMManager::GetDiscSerial();
     getSymbols().setSerial(mDiscSerial);
 
+    const Config& cfg = Config::get();
     Diagnostics& diag = Diagnostics::get();
     // Before the recompiler compiles anything, so the block counters exist when it asks for them.
     diag.getExec().init();
@@ -180,27 +184,27 @@ bool Core::run(const VMBootParameters& params) {
     diag.getExec().enableCalls();
     diag.getApi().init();  // after the rest, so their hooked addresses are left alone
 
-    if (const char* ap = Config::get().getValue("PCSX2HOOK_AUTOPRESS")) {
+    if (const char* ap = cfg.getValue("PCSX2HOOK_AUTOPRESS")) {
         mAutopress = true;
         mAutopressButtons = parseAutopressButtons(ap);
     }
-    if (const char* aps = Config::get().getValue("PCSX2HOOK_AUTOPRESS_SCRIPT")) {
+    if (const char* aps = cfg.getValue("PCSX2HOOK_AUTOPRESS_SCRIPT")) {
         mAutopress = true;
         mAutopressScript = loadAutopressScript(aps);
     }
-    mSaveStateFrame = uint32_t(Config::get().getInt("PCSX2HOOK_SAVESTATE_FRAME", 0));
+    mSaveStateFrame = uint32_t(cfg.getInt("PCSX2HOOK_SAVESTATE_FRAME", 0));
 
     // The two 'jr $ra; nop' stubs the hook registry returns through: one for a post-handler, one for
     // a guest call. They go in the kernel-reserved gap below the user ELF base (0x00100000), so they
     // clobber no program code, and are installed before onVmReady so a hook registered there works.
     const uint32_t sentinel =
-        uint32_t(Config::get().getInt("PCSX2HOOK_SENTINEL_BASE", 0x000FFF00));
+        uint32_t(cfg.getInt("PCSX2HOOK_SENTINEL_BASE", 0x000FFF00));
     Hooks::SetReturnSentinel(sentinel);
     Hooks::SetCallMarker(sentinel + 8);
 
     onVmReady();
 
-    VMManager::SetLimiterMode(Config::get().isSet("PCSX2HOOK_EE_LIMIT")
+    VMManager::SetLimiterMode(cfg.isSet("PCSX2HOOK_EE_LIMIT")
                                   ? LimiterModeType::Nominal
                                   : LimiterModeType::Unlimited);
     VMManager::SetState(VMState::Running);

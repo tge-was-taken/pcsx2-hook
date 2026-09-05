@@ -228,7 +228,7 @@ static int testBoot(void) {
 	check(pcsx2hook_start(boot.ctx) != 0, "start boots and returns");
 
 	while (!pcsx2hook_is_finished(boot.ctx)) {
-		pcsx2hook_pump_dev_window(boot.ctx, 0);
+		pcsx2hook_pump_window(boot.ctx, 0);
 	}
 	pcsx2hook_join(boot.ctx);
 

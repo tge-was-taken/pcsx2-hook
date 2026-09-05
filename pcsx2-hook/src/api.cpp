@@ -169,8 +169,8 @@ int pcsx2hook_wants_window(pcsx2hook_ctx* ctx) {
     return ctx && ctx->host.windowRequested() ? 1 : 0;
 }
 
-int pcsx2hook_create_dev_window(pcsx2hook_ctx* ctx) {
-    return ctx && ctx->host.createDevWindow() ? 1 : 0;
+int pcsx2hook_create_window(pcsx2hook_ctx* ctx) {
+    return ctx && ctx->host.createWindow() ? 1 : 0;
 }
 
 void pcsx2hook_apply_settings(pcsx2hook_ctx* ctx) {
@@ -187,8 +187,8 @@ int pcsx2hook_is_finished(pcsx2hook_ctx* ctx) {
     return ctx && ctx->host.emulationFinished() ? 1 : 0;
 }
 
-void pcsx2hook_pump_dev_window(pcsx2hook_ctx* ctx, int forever) {
-    if (ctx) ctx->host.pumpDevWindow(forever != 0);
+void pcsx2hook_pump_window(pcsx2hook_ctx* ctx, int forever) {
+    if (ctx) ctx->host.pumpWindow(forever != 0);
 }
 
 void pcsx2hook_request_stop(pcsx2hook_ctx* ctx) {

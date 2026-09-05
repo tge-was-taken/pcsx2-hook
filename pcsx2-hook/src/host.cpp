@@ -902,7 +902,7 @@ bool pcsx2hook::Pcsx2Host::windowRequested() {
     return s_use_window.value_or(true);
 }
 
-bool pcsx2hook::Pcsx2Host::createDevWindow() {
+bool pcsx2hook::Pcsx2Host::createWindow() {
     return GSRunner::CreatePlatformWindow();
 }
 
@@ -918,7 +918,7 @@ bool pcsx2hook::Pcsx2Host::emulationFinished() {
     return GSRunner::IsShutdownRequested();
 }
 
-void pcsx2hook::Pcsx2Host::pumpDevWindow(bool forever) {
+void pcsx2hook::Pcsx2Host::pumpWindow(bool forever) {
     GSRunner::PumpPlatformMessages(forever);
 }
 

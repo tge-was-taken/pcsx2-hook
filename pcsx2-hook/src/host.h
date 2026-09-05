@@ -20,7 +20,7 @@ public:
 
     bool windowRequested();
 
-    bool createDevWindow();
+    bool createWindow();
 
     void applySettingsOverride();
 
@@ -28,7 +28,7 @@ public:
 
     bool emulationFinished();
 
-    void pumpDevWindow(bool forever);
+    void pumpWindow(bool forever);
 
     void requestStop();
 

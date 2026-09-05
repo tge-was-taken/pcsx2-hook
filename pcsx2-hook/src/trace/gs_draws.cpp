@@ -213,45 +213,46 @@ void GsDraws::init() {
     }
     Hooks::SetGsDrawSink(&gsDrawSink);
     Hooks::SetGsVSyncSink(&gsVSyncSink);
-    if (Diagnostics::get().getDraws().isVuTraceEnabled() ||
-        Diagnostics::get().getDraws().isVuWatchEnabled() ||
-        Diagnostics::get().getDraws().isVuExecTraceEnabled()) {
+    DrawTrace& draws = Diagnostics::get().getDraws();
+    // The sinks outlive this scope, so each takes its own reference rather than capturing one.
+    if (draws.isVuTraceEnabled() || draws.isVuWatchEnabled() || draws.isVuExecTraceEnabled()) {
         Hooks::SetVu1UploadSink([](u32 addr, const u32* words, u32 count) {
-            Diagnostics::get().getDraws().onVu1Upload(
-                addr, words, count,
-                {Diagnostics::get().getGsDraws().getFrame(),
-                 uint32_t(Diagnostics::get().getGsDraws().getBatch())});
+            GsDraws& gs = Diagnostics::get().getGsDraws();
+            Diagnostics::get().getDraws().onVu1Upload(addr, words, count,
+                                                      {gs.getFrame(), uint32_t(gs.getBatch())});
         });
         Hooks::SetVu1ExecSink([](u32 pc, const u8* vuMem, u32 vuMemSize) {
-            const uint64_t hash = Diagnostics::get().getDraws().resolveProgramAt(pc);
+            DrawTrace& d = Diagnostics::get().getDraws();
+            const uint64_t hash = d.resolveProgramAt(pc);
             const uint32_t entry = pc & 0x3fff;
             std::vector<std::array<uint8_t, 16>> snapshot;
-            if (Diagnostics::get().getDraws().isVuWatchEnabled()) {
-                snapshot = Diagnostics::get().getDraws().snapshotVuWatch(vuMem, vuMemSize);
+            if (d.isVuWatchEnabled()) {
+                snapshot = d.snapshotVuWatch(vuMem, vuMemSize);
             }
             MTGS::RunOnGSThread([hash, entry, snapshot]() {
-                const StreamPos at{Diagnostics::get().getGsDraws().getFrame(),
-                                   uint32_t(Diagnostics::get().getGsDraws().getBatch())};
-                Diagnostics::get().getDraws().setRunningProgramGs(hash, at);
+                GsDraws& gs = Diagnostics::get().getGsDraws();
+                DrawTrace& t = Diagnostics::get().getDraws();
+                const StreamPos at{gs.getFrame(), uint32_t(gs.getBatch())};
+                t.setRunningProgramGs(hash, at);
                 if (!snapshot.empty()) {
-                    Diagnostics::get().getDraws().recordVuWatchGs(hash, snapshot, at);
+                    t.recordVuWatchGs(hash, snapshot, at);
                 }
-                if (Diagnostics::get().getDraws().isVuExecTraceEnabled()) {
-                    Diagnostics::get().getDraws().startVuExecRun(hash, entry >> 3, at);
+                if (t.isVuExecTraceEnabled()) {
+                    t.startVuExecRun(hash, entry >> 3, at);
                 }
             });
         });
         std::fprintf(stderr,
                      "[vu] tracing VU1 microprogram uploads against the open draw context\n");
     }
-    if (Diagnostics::get().getDraws().isVuJrTraceEnabled()) {
+    if (draws.isVuJrTraceEnabled()) {
         Hooks::SetVu1JrSink(&vu1JrSink);
         std::fprintf(
             stderr,
             "[vu] tracing VU1 JR targets (needs PCSX2HOOK_INTERP=1 to see the recompiler's "
             "resolved targets, since generated code does not call back here)\n");
     }
-    if (Diagnostics::get().getDraws().isVuExecTraceEnabled()) {
+    if (draws.isVuExecTraceEnabled()) {
         Hooks::SetVu1StepSink([](const Hooks::Vu1Step& step) {
             Diagnostics::get().getDraws().onVu1Step(step.addr, step.vf, step.vi, step.acc,
                                                     step.branchTaken, step.branchTarget);

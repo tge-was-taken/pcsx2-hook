@@ -162,8 +162,8 @@ PCSX2HOOK_API int pcsx2hook_init(pcsx2hook_ctx* ctx, int argc, char** argv);
 /** @brief Whether the run wants a window, given its configuration and arguments. */
 PCSX2HOOK_API int pcsx2hook_wants_window(pcsx2hook_ctx* ctx);
 
-/** @brief Opens the emulator's own GS window, for watching it beside a host renderer. */
-PCSX2HOOK_API int pcsx2hook_create_dev_window(pcsx2hook_ctx* ctx);
+/** @brief Opens the emulator's own GS window. */
+PCSX2HOOK_API int pcsx2hook_create_window(pcsx2hook_ctx* ctx);
 
 /** @brief Applies the headless GS and CPU settings, and invokes @c on_settings. */
 PCSX2HOOK_API void pcsx2hook_apply_settings(pcsx2hook_ctx* ctx);
@@ -178,7 +178,7 @@ PCSX2HOOK_API int pcsx2hook_is_finished(pcsx2hook_ctx* ctx);
  * @brief Pumps the emulator's own window.
  * @param forever Non-zero to block until emulation ends, for a host with no window of its own.
  */
-PCSX2HOOK_API void pcsx2hook_pump_dev_window(pcsx2hook_ctx* ctx, int forever);
+PCSX2HOOK_API void pcsx2hook_pump_window(pcsx2hook_ctx* ctx, int forever);
 
 /** @brief Asks emulation to stop. Returns at once; wait with ::pcsx2hook_join. */
 PCSX2HOOK_API void pcsx2hook_request_stop(pcsx2hook_ctx* ctx);
