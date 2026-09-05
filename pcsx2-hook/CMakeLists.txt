@@ -37,3 +37,11 @@ target_link_libraries(pcsx2hook PRIVATE PCSX2_FLAGS PCSX2)
 
 install(TARGETS pcsx2hook LIBRARY DESTINATION lib)
 install(DIRECTORY include/ DESTINATION include)
+
+# Compiled as C so the public header is checked for C compatibility, which a C++-only host would
+# never exercise. Covers the contract a caller can reach without booting: null handling, the config
+# copy, and the error string.
+add_executable(pcsx2hook_api_test tests/api_test.c)
+target_link_libraries(pcsx2hook_api_test PRIVATE pcsx2hook)
+set_target_properties(pcsx2hook_api_test PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
+add_test(NAME pcsx2hook_api COMMAND pcsx2hook_api_test)

@@ -3,7 +3,7 @@
  * @brief Driving PCSX2 as a diagnostic instrument: hook guest functions, trace what a PS2 program
  *        executes, and read the emulated hardware.
  *
- * This is the whole supported surface. Everything under @c hook/src is internal.
+ * This is the whole supported surface. Everything under @c pcsx2-hook/src is internal.
  *
  * @section lifecycle Lifecycle
  * The run loop is split rather than blocking, so a host can drive its own window and event pump on

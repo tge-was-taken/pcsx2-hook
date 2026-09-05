@@ -97,5 +97,6 @@ endif()
 # The diagnostic library. Off by default so an upstream build is unaffected.
 option(PCSX2HOOK_LIBRARY "Build the pcsx2hook diagnostic library" OFF)
 if(PCSX2HOOK_LIBRARY)
-	add_subdirectory(hook)
+	enable_testing()
+	add_subdirectory(pcsx2-hook)
 endif()
