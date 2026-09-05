@@ -142,6 +142,47 @@ PCSX2HOOK_API size_t pcsx2hook_read_framebuffer(pcsx2hook_ctx* ctx, void* out, s
 // One GS draw batch's resolved register state, in submission order for the last complete frame.
 PCSX2HOOK_API size_t pcsx2hook_gs_rows(pcsx2hook_ctx* ctx, uint32_t frame, char* out, size_t size);
 
+// Which pipeline is drawing, so a GS batch can be attributed to the draw that produced it. Mirrors
+// the tracer's own kinds.
+typedef enum
+{
+	PCSX2HOOK_DRAW_NONE = 0,
+	PCSX2HOOK_DRAW_ATOMIC,
+	PCSX2HOOK_DRAW_SECTOR,
+	PCSX2HOOK_DRAW_PTANK,
+	PCSX2HOOK_DRAW_IM2D,
+	PCSX2HOOK_DRAW_IM3D,
+	PCSX2HOOK_DRAW_RT2D
+} pcsx2hook_draw_kind;
+
+PCSX2HOOK_API void pcsx2hook_push_draw(pcsx2hook_ctx* ctx, pcsx2hook_draw_kind kind,
+	uint32_t object, uint32_t pipeline);
+PCSX2HOOK_API void pcsx2hook_pop_draw(pcsx2hook_ctx* ctx);
+
+// Any of the library's own settings, by the name the environment would use.
+PCSX2HOOK_API void pcsx2hook_set_config(pcsx2hook_ctx* ctx, const char* name, const char* value);
+
+// The symbol covering an address, or the raw address when no map is loaded. Returns the length
+// needed including the terminator.
+PCSX2HOOK_API size_t pcsx2hook_resolve_symbol(pcsx2hook_ctx* ctx, uint32_t pc, char* out,
+	size_t size);
+PCSX2HOOK_API int pcsx2hook_in_code_range(pcsx2hook_ctx* ctx, uint32_t pc);
+PCSX2HOOK_API void pcsx2hook_load_symbols(pcsx2hook_ctx* ctx);
+
+PCSX2HOOK_API void pcsx2hook_gs_set_recording(pcsx2hook_ctx* ctx, int on);
+PCSX2HOOK_API void pcsx2hook_gs_set_deferred(pcsx2hook_ctx* ctx, int on);
+PCSX2HOOK_API void pcsx2hook_gs_arm_capture(pcsx2hook_ctx* ctx, int skip);
+PCSX2HOOK_API void pcsx2hook_gs_mark_capture_start(pcsx2hook_ctx* ctx);
+PCSX2HOOK_API uint32_t pcsx2hook_gs_standalone_frames(pcsx2hook_ctx* ctx);
+PCSX2HOOK_API void pcsx2hook_gs_report_tracker(pcsx2hook_ctx* ctx, const char* reason);
+
+// The captured GS frame buffer taken at the marked batch, as RGBA8. A null buffer asks for the size.
+PCSX2HOOK_API size_t pcsx2hook_gs_take_capture(pcsx2hook_ctx* ctx, void* out, size_t size,
+	uint32_t* width, uint32_t* height, uint32_t* frame);
+
+// Appends the last complete frame's GS rows to a file, and returns how many were written.
+PCSX2HOOK_API size_t pcsx2hook_gs_write_last_frame(pcsx2hook_ctx* ctx, const char* path);
+
 // Writes whatever the armed tracers have collected.
 PCSX2HOOK_API void pcsx2hook_flush(pcsx2hook_ctx* ctx);
 

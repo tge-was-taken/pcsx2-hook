@@ -4,6 +4,7 @@
 #include "pcsx2hook/pcsx2hook.h"
 
 #include <atomic>
+#include <cstdio>
 #include <cstring>
 #include <string>
 #include <thread>
@@ -20,6 +21,7 @@
 #include "pcsx2hook/config.h"
 #include "pcsx2hook/core.h"
 #include "pcsx2hook/diagnostics.h"
+#include "pcsx2hook/trace/draw_context.h"
 #include "pcsx2hook/host.h"
 #include "pcsx2hook/symbols.h"
 
@@ -118,6 +120,8 @@ struct pcsx2hook_ctx {
     std::string error;
     std::string serial;
     std::vector<uint32_t> frame;
+    std::vector<uint32_t> capture;
+    uint32_t captureWidth = 0, captureHeight = 0, captureFrame = 0;
     uint32_t frameWidth = 0;
     uint32_t frameHeight = 0;
 };
@@ -330,6 +334,96 @@ size_t pcsx2hook_gs_rows(pcsx2hook_ctx* ctx, uint32_t frame, char* out, size_t s
     const std::string rows = Diagnostics::get().getGsDraws().getRowsForFrame(frame);
     if (out && size >= rows.size() + 1) std::memcpy(out, rows.c_str(), rows.size() + 1);
     return rows.size() + 1;
+}
+
+void pcsx2hook_push_draw(pcsx2hook_ctx* ctx, pcsx2hook_draw_kind kind, uint32_t object,
+                         uint32_t pipeline) {
+    if (!ctx) return;
+    DrawContext c;
+    c.kind = static_cast<DrawKind>(kind);
+    c.object = object;
+    c.pipeline = pipeline;
+    Diagnostics::get().getDraws().push(c);
+}
+
+void pcsx2hook_pop_draw(pcsx2hook_ctx* ctx) {
+    if (ctx) Diagnostics::get().getDraws().pop();
+}
+
+void pcsx2hook_set_config(pcsx2hook_ctx* ctx, const char* name, const char* value) {
+    if (ctx && name && value) Config::get().set(name, value);
+}
+
+size_t pcsx2hook_resolve_symbol(pcsx2hook_ctx* ctx, uint32_t pc, char* out, size_t size) {
+    if (!ctx) return 0;
+    const std::string name = getSymbols().resolve(pc);
+    if (out && size >= name.size() + 1) std::memcpy(out, name.c_str(), name.size() + 1);
+    return name.size() + 1;
+}
+
+int pcsx2hook_in_code_range(pcsx2hook_ctx* ctx, uint32_t pc) {
+    return ctx && getSymbols().isInCodeRange(pc) ? 1 : 0;
+}
+
+void pcsx2hook_load_symbols(pcsx2hook_ctx* ctx) {
+    if (ctx) getSymbols().load();
+}
+
+void pcsx2hook_gs_set_recording(pcsx2hook_ctx* ctx, int on) {
+    if (ctx) Diagnostics::get().getGsDraws().setRecording(on != 0);
+}
+
+void pcsx2hook_gs_set_deferred(pcsx2hook_ctx* ctx, int on) {
+    if (ctx) Diagnostics::get().getGsDraws().setDeferred(on != 0);
+}
+
+void pcsx2hook_gs_arm_capture(pcsx2hook_ctx* ctx, int skip) {
+    if (ctx) Diagnostics::get().getGsDraws().armCapture(skip);
+}
+
+void pcsx2hook_gs_mark_capture_start(pcsx2hook_ctx* ctx) {
+    if (ctx) Diagnostics::get().getGsDraws().markCaptureStart();
+}
+
+uint32_t pcsx2hook_gs_standalone_frames(pcsx2hook_ctx* ctx) {
+    return ctx ? Diagnostics::get().getGsDraws().getStandaloneFrames() : 0;
+}
+
+void pcsx2hook_gs_report_tracker(pcsx2hook_ctx* ctx, const char* reason) {
+    if (ctx) Diagnostics::get().getGsTracker().report(reason);
+}
+
+size_t pcsx2hook_gs_take_capture(pcsx2hook_ctx* ctx, void* out, size_t size, uint32_t* width,
+                                 uint32_t* height, uint32_t* frame) {
+    if (!ctx) return 0;
+    if (ctx->capture.empty()) {
+        uint32_t w = 0, h = 0, f = 0;
+        if (!Diagnostics::get().getGsDraws().takeCapture(ctx->capture, w, h, f)) return 0;
+        ctx->captureWidth = w;
+        ctx->captureHeight = h;
+        ctx->captureFrame = f;
+    }
+    if (width) *width = ctx->captureWidth;
+    if (height) *height = ctx->captureHeight;
+    if (frame) *frame = ctx->captureFrame;
+    const size_t needed = ctx->capture.size() * sizeof(uint32_t);
+    if (out && size >= needed) {
+        std::memcpy(out, ctx->capture.data(), needed);
+        ctx->capture.clear();
+    }
+    return needed;
+}
+
+size_t pcsx2hook_gs_write_last_frame(pcsx2hook_ctx* ctx, const char* path) {
+    if (!ctx || !path) return 0;
+    std::FILE* f = std::fopen(path, "ab");
+    if (!f) {
+        ctx->error = "cannot open the GS row file";
+        return 0;
+    }
+    const size_t n = Diagnostics::get().getGsDraws().writeLastFrame(f);
+    std::fclose(f);
+    return n;
 }
 
 void pcsx2hook_flush(pcsx2hook_ctx* ctx) {
