@@ -13,6 +13,7 @@
 #include "common/Error.h"
 #include "common/MemorySettingsInterface.h"
 #include "pcsx2hook/config.h"
+#include "pcsx2hook/pcsx2hook.h"
 #include "pcsx2hook/diagnostics.h"
 #include "fmt/format.h"
 #include "pcsx2/CDVD/CDVD.h"
@@ -28,6 +29,8 @@ namespace {
 
 static_assert(Core::kPadButtonCount == PadDualshock2::Inputs::LENGTH,
               "pad state must cover every DualShock2 input");
+static_assert(PCSX2HOOK_PAD_COUNT == PadDualshock2::Inputs::LENGTH,
+              "the C pad enum must match the emulator's input order");
 
 const std::pair<const char*, int> kPadNames[] = {
     {"select", PadDualshock2::Inputs::PAD_SELECT},

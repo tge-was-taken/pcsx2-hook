@@ -92,6 +92,20 @@ PCSX2HOOK_API void pcsx2hook_request_stop(pcsx2hook_ctx* ctx);
 PCSX2HOOK_API int pcsx2hook_join(pcsx2hook_ctx* ctx);
 PCSX2HOOK_API void pcsx2hook_shutdown(pcsx2hook_ctx* ctx);
 
+// Mirrors the emulator's DualShock2 input order, which is what set_pad_button indexes.
+typedef enum
+{
+	PCSX2HOOK_PAD_UP = 0, PCSX2HOOK_PAD_RIGHT, PCSX2HOOK_PAD_DOWN, PCSX2HOOK_PAD_LEFT,
+	PCSX2HOOK_PAD_TRIANGLE, PCSX2HOOK_PAD_CIRCLE, PCSX2HOOK_PAD_CROSS, PCSX2HOOK_PAD_SQUARE,
+	PCSX2HOOK_PAD_SELECT, PCSX2HOOK_PAD_START,
+	PCSX2HOOK_PAD_L1, PCSX2HOOK_PAD_L2, PCSX2HOOK_PAD_R1, PCSX2HOOK_PAD_R2,
+	PCSX2HOOK_PAD_L3, PCSX2HOOK_PAD_R3,
+	PCSX2HOOK_PAD_ANALOG, PCSX2HOOK_PAD_PRESSURE,
+	PCSX2HOOK_PAD_L_UP, PCSX2HOOK_PAD_L_RIGHT, PCSX2HOOK_PAD_L_DOWN, PCSX2HOOK_PAD_L_LEFT,
+	PCSX2HOOK_PAD_R_UP, PCSX2HOOK_PAD_R_RIGHT, PCSX2HOOK_PAD_R_DOWN, PCSX2HOOK_PAD_R_LEFT,
+	PCSX2HOOK_PAD_COUNT
+} pcsx2hook_pad_button;
+
 PCSX2HOOK_API void pcsx2hook_set_pad_button(pcsx2hook_ctx* ctx, int bind, int pressed);
 PCSX2HOOK_API void pcsx2hook_set_speed_limit(pcsx2hook_ctx* ctx, int enabled);
 
