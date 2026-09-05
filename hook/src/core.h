@@ -32,6 +32,10 @@ public:
     void setSpeedLimit(bool enabled);
     void requestSaveState();
 
+    // A host with a renderer of its own binds these; the library has nothing to capture.
+    virtual void requestCapture() {}
+    virtual void requestRecord() {}
+
 protected:
     // A host with game-specific work extends the run loop here rather than reimplementing it.
     virtual void onVmReady() {}

@@ -1243,6 +1243,14 @@ void GSRunner::PumpPlatformMessages(bool forever) {
                         case XK_2:
                             bind = PadDualshock2::Inputs::PAD_R2;
                             break;
+                        case XK_c:
+                        case XK_C:
+                            if (event.type == KeyPress) s_core->requestCapture();
+                            break;
+                        case XK_r:
+                        case XK_R:
+                            if (event.type == KeyPress) s_core->requestRecord();
+                            break;
                         case XK_v:
                         case XK_V:
                             if (event.type == KeyPress) s_core->requestSaveState();
