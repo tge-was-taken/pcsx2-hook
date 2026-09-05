@@ -231,7 +231,7 @@ void ApiTrace::init() {
     getSymbols().load();
     const std::vector<std::pair<uint32_t, std::string>>& syms = getSymbols().getEntries();
 
-    size_t armed = 0, missing = 0;
+    size_t enabled = 0, missing = 0;
     std::string line;
     while (std::getline(in, line)) {
         while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
@@ -257,7 +257,7 @@ void ApiTrace::init() {
             continue;
         }
         Hooks::Register(addr, &apiEnterHook, &apiExitHook);
-        armed++;
+        enabled++;
     }
 
     const char* out = Config::get().getValue("PCSX2HOOK_API_TRACE");
@@ -272,7 +272,7 @@ void ApiTrace::init() {
     }
     std::fprintf(mSeqFile, "dataId\trepeat\n");
     Hooks::AddGuestMemSink(&apiMemSink);
-    std::fprintf(stderr, "[api] armed %zu functions (%zu unresolved) -> %s\n", armed, missing,
+    std::fprintf(stderr, "[api] enabled %zu functions (%zu unresolved) -> %s\n", enabled, missing,
                  path.c_str());
 }
 void ApiTrace::write() {

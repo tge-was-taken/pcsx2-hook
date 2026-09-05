@@ -61,7 +61,7 @@ typedef void (*pcsx2hook_frame_fn)(uint32_t frame, void* user);
 typedef struct
 {
 	const char* bios;     /**< Full path to the BIOS image. */
-	const char* dump_dir; /**< Where every armed trace writes. Created if missing. */
+	const char* dump_dir; /**< Where every enabled trace writes. Created if missing. */
 	/** Symbol map: a file, or a directory searched for @c <ELF name>.map so one host can carry a map
 	 *  per disc. Null leaves every address raw. */
 	const char* symbols;
@@ -72,7 +72,7 @@ typedef struct
 	/** While the emulator's settings are still writable. The only place the @c set_* settings
 	 *  functions have any effect. */
 	pcsx2hook_void_fn on_settings;
-	/** After the VM is up and the traces are armed, before the loop starts. Guest RAM and the disc
+	/** After the VM is up and the traces are enabled, before the loop starts. Guest RAM and the disc
 	 *  serial are readable here, so this is where a host registers its hooks. */
 	pcsx2hook_void_fn on_vm_ready;
 	/** Once per emulated frame, on the CPU thread. */
@@ -110,7 +110,7 @@ typedef int (*pcsx2hook_pre_fn)(pcsx2hook_regs* regs, void* user);
 typedef void (*pcsx2hook_post_fn)(pcsx2hook_regs* regs, void* user);
 
 /**
- * @brief The traces that can be armed.
+ * @brief The traces that can be enabled.
  *
  * Block coverage costs one memory increment per block execution, so it can stay on for a whole
  * boot. The per-instruction traces need @c interpreter and are meant to run from a savestate.
@@ -139,11 +139,11 @@ PCSX2HOOK_API pcsx2hook_ctx* pcsx2hook_create(const pcsx2hook_config* config);
 PCSX2HOOK_API void pcsx2hook_destroy(pcsx2hook_ctx* ctx);
 
 /**
- * @brief Arms a trace.
+ * @brief Enables a trace.
  * @return Non-zero on success. Fails only for an unknown @p which; see ::pcsx2hook_get_last_error.
  * @note Before ::pcsx2hook_start, since a trace hooks code the recompiler compiles once.
  */
-PCSX2HOOK_API int pcsx2hook_arm_trace(pcsx2hook_ctx* ctx, pcsx2hook_trace which);
+PCSX2HOOK_API int pcsx2hook_enable_trace(pcsx2hook_ctx* ctx, pcsx2hook_trace which);
 
 /** @name Lifecycle
  *  Call in the order listed. See @ref lifecycle.
@@ -325,7 +325,7 @@ PCSX2HOOK_API void pcsx2hook_pop_draw(pcsx2hook_ctx* ctx);
 
 /**
  * @brief Sets one of the library's own settings by the name its environment variable uses.
- * @note Before ::pcsx2hook_start, since most are read once while arming.
+ * @note Before ::pcsx2hook_start, since most are read once while enabling.
  */
 PCSX2HOOK_API void pcsx2hook_set_config(pcsx2hook_ctx* ctx, const char* name, const char* value);
 
@@ -349,7 +349,7 @@ PCSX2HOOK_API void pcsx2hook_load_symbols(pcsx2hook_ctx* ctx);
 /** @} */
 
 /** @name GS trace
- *  Needs ::PCSX2HOOK_TRACE_GS armed.
+ *  Needs ::PCSX2HOOK_TRACE_GS enabled.
  *  @{ */
 
 /** @brief Starts or stops recording GS batches. */
@@ -359,11 +359,11 @@ PCSX2HOOK_API void pcsx2hook_set_gs_recording(pcsx2hook_ctx* ctx, int on);
 PCSX2HOOK_API void pcsx2hook_set_gs_deferred(pcsx2hook_ctx* ctx, int on);
 
 /**
- * @brief Arms a frame-buffer capture.
+ * @brief Enables a frame-buffer capture.
  * @param skip Drawing frames to let pass after the mark before capturing. One is usually right,
  *             since a frame's DMA chain is built while the previous one is still transmitting.
  */
-PCSX2HOOK_API void pcsx2hook_arm_gs_capture(pcsx2hook_ctx* ctx, int skip);
+PCSX2HOOK_API void pcsx2hook_enable_gs_capture(pcsx2hook_ctx* ctx, int skip);
 
 /** @brief Marks the batch stream position a capture is relative to. */
 PCSX2HOOK_API void pcsx2hook_mark_gs_capture_start(pcsx2hook_ctx* ctx);
@@ -379,7 +379,7 @@ PCSX2HOOK_API void pcsx2hook_report_gs_tracker(pcsx2hook_ctx* ctx, const char* r
 	const char* path);
 
 /**
- * @brief Takes the capture armed by ::pcsx2hook_arm_gs_capture, as RGBA8.
+ * @brief Takes the capture enabled by ::pcsx2hook_enable_gs_capture, as RGBA8.
  * @param out Null to ask for the size.
  * @param frame Receives the GS frame the capture came from. May be null.
  * @return Bytes needed, or 0 if no capture is ready. Caches like ::pcsx2hook_read_framebuffer.
@@ -405,7 +405,7 @@ PCSX2HOOK_API size_t pcsx2hook_write_gs_last_frame(pcsx2hook_ctx* ctx, const cha
 /** @} */
 
 /**
- * @brief Writes out whatever the armed traces have collected.
+ * @brief Writes out whatever the enabled traces have collected.
  * @note Killing the process loses them, so a run that wants its trace has to reach here.
  */
 PCSX2HOOK_API void pcsx2hook_flush_traces(pcsx2hook_ctx* ctx);

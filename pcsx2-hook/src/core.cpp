@@ -177,7 +177,7 @@ bool Core::run(const VMBootParameters& params) {
     diag.getSif().init();
     diag.getGsDraws().init();
     diag.getGsTracker().init();
-    diag.getExec().armCalls();
+    diag.getExec().enableCalls();
     diag.getApi().init();  // after the rest, so their hooked addresses are left alone
 
     if (const char* ap = Config::get().getValue("PCSX2HOOK_AUTOPRESS")) {

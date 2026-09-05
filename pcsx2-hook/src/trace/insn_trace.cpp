@@ -153,11 +153,11 @@ const std::string& InsnTrace::getMnemonic(uint32_t pc, uint32_t code) {
 }
 void InsnTrace::init() {
     if (!isEnabled()) return;
-    mArmed = true;
+    mEnabled = true;
     Hooks::SetInsnSink(&insnBeforeSink, &insnAfterSink);
     Hooks::AddGuestMemSink(&insnMemSink);
     std::fprintf(stderr,
-                 "[insn] armed; needs PCSX2HOOK_INTERP=1 (EE interpreter) to see anything\n");
+                 "[insn] enabled; needs PCSX2HOOK_INTERP=1 (EE interpreter) to see anything\n");
 }
 void InsnTrace::onBefore(uint32_t pc, uint32_t code) {
     mInstructions++;

@@ -40,7 +40,7 @@ public:
     size_t writeLastFrame(std::FILE* out);
     void setDeferred(bool on);
     std::string getCompletedRows();
-    void armCapture(int skip);
+    void enableCapture(int skip);
     void markCaptureStart();
     bool takeCapture(std::vector<uint32_t>& pixels, uint32_t& w, uint32_t& h, uint32_t& frame);
     std::string getRowsForFrame(uint32_t frame);

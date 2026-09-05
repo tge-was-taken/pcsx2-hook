@@ -50,7 +50,7 @@ public:
     bool isEnabled();
     bool isArgsEnabled();
     void init();
-    void armCalls();
+    void enableCalls();
     bool finish(uint32_t frameCount);
     Hooks::ExecBlockSlots registerBlock(uint32_t startpc, uint32_t endpc);
     void onSyscall(uint32_t num, Hooks::Context& ctx);
@@ -81,8 +81,8 @@ private:
     std::unordered_map<uint32_t, uint32_t> mSyscallReturnSite;
     std::unordered_map<uint32_t, uint32_t> mSyscallSiteNum;
     std::unordered_map<uint32_t, CallSite> mFunctions;
-    size_t mSyscallSitesArmed = 0;
-    size_t mFunctionsArmed = 0;
+    size_t mSyscallSitesEnabled = 0;
+    size_t mFunctionsEnabled = 0;
 };
 
 Hooks::Result execSyscallReturnHook(Hooks::Context& ctx);

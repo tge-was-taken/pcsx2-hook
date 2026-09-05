@@ -106,8 +106,8 @@ static void testSizeContract(pcsx2hook_ctx* ctx) {
 static void testErrors(pcsx2hook_ctx* ctx) {
 	check(pcsx2hook_get_last_error(ctx) != NULL, "last_error is never null");
 
-	check(pcsx2hook_arm_trace(ctx, PCSX2HOOK_TRACE_EXEC) != 0, "arming a known trace succeeds");
-	check(pcsx2hook_arm_trace(ctx, (pcsx2hook_trace)999) == 0, "arming an unknown trace fails");
+	check(pcsx2hook_enable_trace(ctx, PCSX2HOOK_TRACE_EXEC) != 0, "enabling a known trace succeeds");
+	check(pcsx2hook_enable_trace(ctx, (pcsx2hook_trace)999) == 0, "enabling an unknown trace fails");
 	check(strlen(pcsx2hook_get_last_error(ctx)) > 0, "a failed call leaves a reason behind");
 
 	// Only the calls that answer from host state belong here. Anything that reaches the VM or the
@@ -124,7 +124,7 @@ static void testNullContext(void) {
 	check(pcsx2hook_get_ram_base(NULL, NULL) == NULL, "mem_get_ram_base");
 	check(pcsx2hook_get_ee_pc(NULL) == 0, "get_ee_pc");
 	check(pcsx2hook_is_finished(NULL) == 0, "is_finished");
-	check(pcsx2hook_arm_trace(NULL, PCSX2HOOK_TRACE_GS) == 0, "trace_arm");
+	check(pcsx2hook_enable_trace(NULL, PCSX2HOOK_TRACE_GS) == 0, "enable_trace");
 	check(pcsx2hook_add_hook(NULL, 0x100000, NULL, NULL, NULL) == 0, "hook_add");
 	check(pcsx2hook_load_state(NULL, "x.p2s") == 0, "state_load");
 	check(pcsx2hook_read_framebuffer(NULL, NULL, 0, NULL, NULL) == 0, "gs_read_framebuffer");
@@ -222,7 +222,7 @@ static int testBoot(void) {
 	pcsx2hook_apply_settings(boot.ctx);
 	check(boot.settings == 1, "on_settings ran once, from apply_settings");
 
-	check(pcsx2hook_arm_trace(boot.ctx, PCSX2HOOK_TRACE_EXEC) != 0, "the exec trace arms");
+	check(pcsx2hook_enable_trace(boot.ctx, PCSX2HOOK_TRACE_EXEC) != 0, "the exec trace is enabled");
 	// start returns as soon as the CPU thread is running, so on_vm_ready has not necessarily fired
 	// yet; it is checked after the join instead.
 	check(pcsx2hook_start(boot.ctx) != 0, "start boots and returns");

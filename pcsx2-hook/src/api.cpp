@@ -64,7 +64,7 @@ void postThunk(Hooks::Context& ctx) {
     it->second.post(&view, it->second.user);
 }
 
-// One variable per trace, so arming through the API and arming through the environment reach the
+// One variable per trace, so enabling through the API and enabling through the environment reach the
 // same switch rather than two that can disagree.
 const char* traceVariable(pcsx2hook_trace which) {
     switch (which) {
@@ -146,7 +146,7 @@ void pcsx2hook_destroy(pcsx2hook_ctx* ctx) {
     delete ctx;
 }
 
-int pcsx2hook_arm_trace(pcsx2hook_ctx* ctx, pcsx2hook_trace which) {
+int pcsx2hook_enable_trace(pcsx2hook_ctx* ctx, pcsx2hook_trace which) {
     if (!ctx) return 0;
     const char* name = traceVariable(which);
     if (!name) {
@@ -370,8 +370,8 @@ void pcsx2hook_set_gs_deferred(pcsx2hook_ctx* ctx, int on) {
     if (ctx) Diagnostics::get().getGsDraws().setDeferred(on != 0);
 }
 
-void pcsx2hook_arm_gs_capture(pcsx2hook_ctx* ctx, int skip) {
-    if (ctx) Diagnostics::get().getGsDraws().armCapture(skip);
+void pcsx2hook_enable_gs_capture(pcsx2hook_ctx* ctx, int skip) {
+    if (ctx) Diagnostics::get().getGsDraws().enableCapture(skip);
 }
 
 void pcsx2hook_mark_gs_capture_start(pcsx2hook_ctx* ctx) {

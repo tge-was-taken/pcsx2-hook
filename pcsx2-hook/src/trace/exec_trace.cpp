@@ -133,7 +133,7 @@ void ExecTrace::init() {
     Hooks::SetExecThreadBit(&mExecThreadBit);
     Hooks::SetSyscallSink(&execSyscallSink);
 }
-void ExecTrace::armCalls() {
+void ExecTrace::enableCalls() {
     if (!isEnabled()) return;
     getSymbols().load();
 
@@ -146,7 +146,7 @@ void ExecTrace::armCalls() {
                 if (site == 0 || Hooks::IsHooked(site + 4)) continue;
                 mSyscallReturnSite[site + 4] = site;
                 Hooks::Register(site + 4, &execSyscallReturnHook, nullptr);
-                mSyscallSitesArmed++;
+                mSyscallSitesEnabled++;
             }
             std::fclose(f);
         } else {
@@ -158,12 +158,12 @@ void ExecTrace::armCalls() {
         for (const std::pair<uint32_t, std::string>& sym : getSymbols().getEntries()) {
             if (Hooks::IsHooked(sym.first)) continue;
             Hooks::Register(sym.first, &execFunctionEntryHook, nullptr);
-            mFunctionsArmed++;
+            mFunctionsEnabled++;
         }
     }
-    if (mSyscallSitesArmed || mFunctionsArmed)
-        std::fprintf(stderr, "[exec] armed %zu syscall return sites, %zu function getEntries\n",
-                     mSyscallSitesArmed, mFunctionsArmed);
+    if (mSyscallSitesEnabled || mFunctionsEnabled)
+        std::fprintf(stderr, "[exec] enabled %zu syscall return sites, %zu function getEntries\n",
+                     mSyscallSitesEnabled, mFunctionsEnabled);
 }
 
 void ExecTrace::writeSamples(FILE* f, const CallSite& site, bool withResult) {

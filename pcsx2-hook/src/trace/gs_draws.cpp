@@ -291,7 +291,7 @@ void GsDraws::setDeferred(bool on) {
     const std::lock_guard<std::mutex> lock(mMutex);
     mDeferred = on;
 }
-void GsDraws::armCapture(int skip) {
+void GsDraws::enableCapture(int skip) {
     const std::lock_guard<std::mutex> lock(mMutex);
     mCapturePixels.clear();
     mCaptureSkip = skip;

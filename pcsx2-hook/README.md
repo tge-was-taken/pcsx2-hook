@@ -26,7 +26,7 @@ pcsx2hook_ctx* ctx = pcsx2hook_create(&config);
 pcsx2hook_early_init(ctx);
 pcsx2hook_init(ctx, argc, argv);
 pcsx2hook_apply_settings(ctx);
-pcsx2hook_arm_trace(ctx, PCSX2HOOK_TRACE_GS);
+pcsx2hook_enable_trace(ctx, PCSX2HOOK_TRACE_GS);
 pcsx2hook_start(ctx);
 while (!pcsx2hook_is_finished(ctx)) { /* your event pump */ }
 pcsx2hook_join(ctx);
@@ -49,7 +49,7 @@ The run loop is split rather than blocking so your thread stays free. Register h
 - **Headless software and null rendering.** Upstream needs a window for those; presenting through
   Vulkan is what makes a surfaceless run work.
 
-Coverage costs one increment per basic block, so leave it armed for a whole boot. The
+Coverage costs one increment per basic block, so leave it enabled for a whole boot. The
 per-instruction traces need the interpreter and are meant to run from a savestate.
 
 ## Layout

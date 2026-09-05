@@ -114,7 +114,7 @@ private:
     void writeHex(FILE* f, const uint8_t* b);
     void writeCase(FILE* f, const std::string& mnem, const Case& c, bool synthetic);
 
-    bool mArmed = false;
+    bool mEnabled = false;
     Frame mFrames[kMaxDepth];
     uint32_t mDepth = 0;
     std::unordered_map<uint32_t, std::string> mMnemonic;
