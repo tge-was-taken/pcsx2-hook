@@ -6,6 +6,9 @@
 #include "GS.h"
 #include "Gif_Unit.h"
 #include "MTVU.h"
+#ifdef PCSX2HOOK
+#include "Hooks.h"
+#endif
 
 #include <cmath>
 u32 laststall = 0;
@@ -3388,7 +3391,20 @@ static void VU1MI_IBLEZ() { _vuIBLEZ(&VU1); }
 static void VU1MI_IBNE() { _vuIBNE(&VU1); }
 static void VU1MI_B()   { _vuB(&VU1); }
 static void VU1MI_BAL() { _vuBAL(&VU1); }
+#ifdef PCSX2HOOK
+static void VU1MI_JR()
+{
+	// which register a computed jump actually read, and what it resolved to. The static
+	// disassembly cannot know this (the value comes from an IADDIU dozens of instructions earlier,
+	// picked by a runtime branch), and reading the sequentially-next instructions instead is wrong:
+	// they are not necessarily the ones that execute. _Is_ expands against a local named VU.
+	VURegs* VU = &VU1;
+	Hooks::OnVu1Jr(VU1.VI[REG_TPC].UL, _Is_, VU1.VI[_Is_].US[0] * 8);
+	_vuJR(&VU1);
+}
+#else
 static void VU1MI_JR()   { _vuJR(&VU1); }
+#endif
 static void VU1MI_JALR() { _vuJALR(&VU1); }
 static void VU1MI_MFP() { _vuMFP(&VU1); }
 static void VU1MI_WAITP() { _vuWAITP(&VU1); }
