@@ -89,7 +89,7 @@ namespace Hooks
 	int Dispatch();
 
 	using DmaKickSink = void (*)(u32 chan, u32 eepc, u32 madr, u32 qwc);
-	void SetDmaKickSink(DmaKickSink sink);
+	void AddDmaKickSink(DmaKickSink sink);
 	void OnDmaKick(u32 chan, u32 eepc, u32 madr, u32 qwc);
 
 	struct GsDraw
@@ -187,6 +187,24 @@ namespace Hooks
 	bool HasSpuRegSink();
 	void OnSpuRegWrite(u32 addr, u16 value, bool after);
 	void OnSpuRegRead(u32 addr, u16 value);
+
+	enum class TimingEvent : u32
+	{
+		VuRunStart,
+		VuSlice,
+		XgkickIssue,
+		XgkickChunk,
+		GifTransfer,
+		GsPacket,
+		Path3Mask,
+		DmaIrq,
+		GifDma,
+		VSync,
+	};
+	using TimingSink = void (*)(TimingEvent kind, u32 a, u32 b, u32 c);
+	void SetTimingSink(TimingSink sink);
+	bool HasTimingSink();
+	void OnTimingEvent(TimingEvent kind, u32 a = 0, u32 b = 0, u32 c = 0);
 	struct ExecBlockSlots
 	{
 		u64* count;

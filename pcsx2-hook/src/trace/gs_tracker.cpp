@@ -57,7 +57,7 @@ void GsTracker::init() {
     }
     mEnabled = true;
     getSymbols().load();
-    Hooks::SetDmaKickSink(&gsKickSink);
+    Hooks::AddDmaKickSink(&gsKickSink);
     std::fprintf(stderr, "[gstrack] GS-submission coverage tracer active\n");
 }
 

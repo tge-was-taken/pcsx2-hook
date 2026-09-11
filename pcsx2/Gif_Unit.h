@@ -3,6 +3,9 @@
 
 #pragma once
 #include <deque>
+#ifdef PCSX2HOOK
+#include "Hooks.h"
+#endif
 #include "Gif.h"
 #include "Vif.h"
 #include "GS.h"
@@ -579,6 +582,10 @@ struct Gif_Unit
 	// Adds a finished GS Packet to the MTGS ring buffer
 	__fi void AddCompletedGSPacket(GS_Packet& gsPack, GIF_PATH path)
 	{
+#ifdef PCSX2HOOK
+		if (Hooks::HasTimingSink() && gsPack.size != ~0u)
+			Hooks::OnTimingEvent(Hooks::TimingEvent::GsPacket, path, gsPack.size);
+#endif
 		if (gsPack.size == ~0u)
 			Gif_AddGSPacketMTVU(gsPack, path);
 		else
@@ -650,6 +657,15 @@ struct Gif_Unit
 		}
 		//pxAssertDev((stat.APATH==0) || checkPaths(1,1,1), "Gif Unit - APATH wasn't cleared?");
 		lastTranType = tranType;
+#ifdef PCSX2HOOK
+		if (Hooks::HasTimingSink())
+		{
+			const bool hookCanTake = (tranType & 3) == GIF_PATH_1 ? CanDoPath1() :
+									 (tranType & 3) == GIF_PATH_2 ? (tranType == GIF_TRANS_DIRECTHL ? CanDoPath2HL() : CanDoPath2()) :
+																	CanDoPath3();
+			Hooks::OnTimingEvent(Hooks::TimingEvent::GifTransfer, tranType, size, hookCanTake);
+		}
+#endif
 
 		if (tranType == GIF_TRANS_FIFO)
 		{

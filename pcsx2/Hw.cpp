@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: GPL-3.0+
 
 #include "Common.h"
+#ifdef PCSX2HOOK
+#include "Hooks.h"
+#endif
 #include "Gif_Unit.h"
 #include "Hardware.h"
 #include "SPU2/spu2.h"
@@ -108,6 +111,10 @@ void hwIntcIrq(int n)
 
 void hwDmacIrq(int n)
 {
+#ifdef PCSX2HOOK
+	if (Hooks::HasTimingSink())
+		Hooks::OnTimingEvent(Hooks::TimingEvent::DmaIrq, n);
+#endif
 	psHu32(DMAC_STAT) |= 1<<n;
 	if(psHu16(DMAC_STAT+2) & (1<<n))cpuTestDMACInts();
 }

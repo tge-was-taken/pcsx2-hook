@@ -1878,6 +1878,10 @@ void _vuXGKICKTransfer(s32 cycles, bool flush)
 		}
 		else*/
 		//{
+#ifdef PCSX2HOOK
+			if (Hooks::HasTimingSink())
+				Hooks::OnTimingEvent(Hooks::TimingEvent::XgkickChunk, VU1.xgkickaddr, transfersize * 0x10, flush);
+#endif
 			gifUnit.TransferGSPacketData(GIF_TRANS_XGKICK, &vuRegs[1].Mem[VU1.xgkickaddr], transfersize * 0x10, true);
 		//}
 
@@ -1931,6 +1935,10 @@ static __ri void _vuXGKICK(VURegs* VU)
 	// Can be tested with Resident Evil: Outbreak, Kingdom Hearts, CART Fury.
 	VU->xgkickcyclecount = 1;
 	VU0.VI[REG_VPU_STAT].UL |= (1 << 12);
+#ifdef PCSX2HOOK
+	if (Hooks::HasTimingSink())
+		Hooks::OnTimingEvent(Hooks::TimingEvent::XgkickIssue, addr);
+#endif
 	VUM_LOG("XGKICK addr %x", addr);
 }
 

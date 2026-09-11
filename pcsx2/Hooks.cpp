@@ -19,7 +19,8 @@ namespace
 	};
 	std::unordered_map<u32, HookPair> s_hooks;
 	Hooks::Observer s_observer = nullptr;
-	Hooks::DmaKickSink s_dmaSink = nullptr;
+	Hooks::DmaKickSink s_dmaSinks[2] = {};
+	u32 s_dmaSinkCount = 0;
 	Hooks::GsDrawSink s_gsDrawSink = nullptr;
 	Hooks::Vu1UploadSink s_vu1UploadSink = nullptr;
 	Hooks::Vu1ExecSink s_vu1ExecSink = nullptr;
@@ -153,15 +154,16 @@ int Hooks::Dispatch()
 	return 0;
 }
 
-void Hooks::SetDmaKickSink(DmaKickSink sink)
+void Hooks::AddDmaKickSink(DmaKickSink sink)
 {
-	s_dmaSink = sink;
+	if (sink && s_dmaSinkCount < std::size(s_dmaSinks))
+		s_dmaSinks[s_dmaSinkCount++] = sink;
 }
 
 void Hooks::OnDmaKick(u32 chan, u32 eepc, u32 madr, u32 qwc)
 {
-	if (s_dmaSink)
-		s_dmaSink(chan, eepc, madr, qwc);
+	for (u32 i = 0; i < s_dmaSinkCount; i++)
+		s_dmaSinks[i](chan, eepc, madr, qwc);
 }
 
 void Hooks::SetGsVSyncSink(GsVSyncSink sink)
@@ -281,6 +283,7 @@ namespace
 	Hooks::VifCmdBeforeSink s_vifCmdBefore[2] = {};
 	Hooks::VifCmdAfterSink s_vifCmdAfter[2] = {};
 	u32 s_vifCmdSinkCount = 0;
+	Hooks::TimingSink s_timingSink = nullptr;
 	Hooks::SpuAdpcmSink s_spuAdpcmSink = nullptr;
 	Hooks::SpuVoiceSink s_spuVoiceSink = nullptr;
 	Hooks::SpuRegWriteSink s_spuRegWrite = nullptr;
@@ -367,6 +370,22 @@ void Hooks::OnVifCmdAfter(u32 idx, const u32* data, u32 consumed, bool done)
 {
 	for (u32 i = 0; i < s_vifCmdSinkCount; i++)
 		s_vifCmdAfter[i](idx, data, consumed, done);
+}
+
+void Hooks::SetTimingSink(TimingSink sink)
+{
+	s_timingSink = sink;
+}
+
+bool Hooks::HasTimingSink()
+{
+	return s_timingSink != nullptr;
+}
+
+void Hooks::OnTimingEvent(TimingEvent kind, u32 a, u32 b, u32 c)
+{
+	if (s_timingSink)
+		s_timingSink(kind, a, b, c);
 }
 
 void Hooks::AddVuInsnSink(VuInsnSink before, VuInsnSink after)

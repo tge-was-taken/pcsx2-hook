@@ -45,7 +45,7 @@ The run loop is split rather than blocking so your thread stays free. Register h
 - **Synchronous guest calls** from inside a handler.
 - **Traces**: EE coverage and syscalls, per-instruction reference vectors, the IOP equivalents
   plus the IRX import surface, hardware register access on both CPUs, SIF, VIF1, VU1, GS batches,
-  EE memory access, and VU/VIF/SPU2 reference vectors.
+  EE memory access, VU/VIF/SPU2 reference vectors, and timing.
 - **Headless software and null rendering.** Upstream needs a window for those; presenting through
   Vulkan is what makes a surfaceless run work.
 
@@ -63,6 +63,19 @@ the first column:
 
 `scripts/hw_vectors_merge.py` unions them across runs, and `scripts/hw_vectors_check.py` checks
 them against models that do not come from the emulator's code.
+
+`PCSX2HOOK_TIMING_TRACE` records what those isolated cases cannot show, order and
+cycle, and wants accurate timing (Instant VU1, WaitLoop and IntcStat off) plus both VU interpreters.
+`PCSX2HOOK_TIMING_TRACE_FRAMES` bounds the timeline, 10 frames by default:
+
+| file | one row is |
+|---|---|
+| `vu_runs.jsonl` | a whole VU program from its initial state: per step the stall cycles, register and memory writes and pipeline occupancy, and any change the VIF or EE made between slices. `scripts/vu_runs_check.py` replays each to its recorded end state |
+| `vu_run_images.jsonl` | the micro-memory image a run executed, by hash |
+| `timing_timeline.jsonl` | one event, EE-cycle stamped: VIF commands, VU start/slice/end, XGKICK and its send, GIF path offers and finished packets, PATH3 mask writes, GIF DMA service, DMA kicks and interrupts, vsync |
+| `xgkick_hazards.jsonl` | a kicked quadword that changed before the GIF took it |
+
+`scripts/timing_summary.py` puts one row per scene directory.
 
 ## Layout
 

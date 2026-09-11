@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: GPL-3.0+
 
 #include <time.h>
+#ifdef PCSX2HOOK
+#include "Hooks.h"
+#endif
 #include <cmath>
 
 #include "Common.h"
@@ -486,6 +489,10 @@ static __fi void DoFMVSwitch()
 
 static __fi void VSyncStart(u64 sCycle)
 {
+#ifdef PCSX2HOOK
+	if (Hooks::HasTimingSink())
+		Hooks::OnTimingEvent(Hooks::TimingEvent::VSync);
+#endif
 	// End-of-frame tasks.
 	DoFMVSwitch();
 	VMManager::Internal::VSyncOnCPUThread();

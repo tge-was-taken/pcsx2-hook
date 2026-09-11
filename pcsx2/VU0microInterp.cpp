@@ -260,6 +260,10 @@ void InterpVU0::Step()
 
 void InterpVU0::Execute(u32 cycles)
 {
+#ifdef PCSX2HOOK
+	if (Hooks::HasTimingSink())
+		Hooks::OnTimingEvent(Hooks::TimingEvent::VuSlice, 0, cycles);
+#endif
 	const FPControlRegisterBackup fpcr_backup(EmuConfig.Cpu.VU0FPCR);
 
 	VU0.VI[REG_TPC].UL <<= 3;

@@ -5,6 +5,9 @@
 // of the VU0 micro.
 
 #include "Common.h"
+#ifdef PCSX2HOOK
+#include "Hooks.h"
+#endif
 #include <cmath>
 #include "VUmicro.h"
 #include "MTVU.h"
@@ -73,6 +76,10 @@ void vu1ExecMicro(u32 addr)
 
 	CpuVU1->SetStartPC(VU1.VI[REG_TPC].UL << 3);
 	_vuExecMicroDebug(VU1);
+#ifdef PCSX2HOOK
+	if (Hooks::HasTimingSink())
+		Hooks::OnTimingEvent(Hooks::TimingEvent::VuRunStart, 1, VU1.VI[REG_TPC].UL);
+#endif
 	if(!INSTANT_VU1)
 		CpuVU1->ExecuteBlock(1);
 	else

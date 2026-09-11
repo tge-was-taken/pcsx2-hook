@@ -531,6 +531,10 @@ vifOp(vifCode_MskPath3)
 	{
 		vif1Regs.mskpath3 = (vif1Regs.code >> 15) & 0x1;
 		gifRegs.stat.M3P = (vif1Regs.code >> 15) & 0x1;
+#ifdef PCSX2HOOK
+		if (Hooks::HasTimingSink())
+			Hooks::OnTimingEvent(Hooks::TimingEvent::Path3Mask, 0, gifRegs.stat.M3P, gifRegs.stat.M3R);
+#endif
 		GUNIT_LOG("Vif1 - MskPath3 [p3 = %s]", vif1Regs.mskpath3 ? "masked" : "enabled");
 		if (!vif1Regs.mskpath3)
 		{

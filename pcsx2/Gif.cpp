@@ -216,6 +216,11 @@ __fi void gifCheckPathStatus(bool calledFromGIF)
 
 __fi void gifInterrupt()
 {
+#ifdef PCSX2HOOK
+	if (Hooks::HasTimingSink())
+		Hooks::OnTimingEvent(Hooks::TimingEvent::GifDma, gifch.qwc, gifch.chcr.STR,
+			(gifUnit.Path3Masked() ? 1u : 0u) | (gifUnit.CanDoPath3() ? 2u : 0u));
+#endif
 	GIF_LOG("gifInterrupt caught qwc=%d fifo=%d(%d) apath=%d oph=%d state=%d!", gifch.qwc, gifRegs.stat.FQC, gif_fifo.fifoSize, gifRegs.stat.APATH, gifRegs.stat.OPH, gifUnit.gifPath[GIF_PATH_3].state);
 	gifCheckPathStatus(false);
 

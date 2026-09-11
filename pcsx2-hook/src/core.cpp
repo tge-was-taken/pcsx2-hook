@@ -127,6 +127,12 @@ void Core::applyHeadlessSettings(MemorySettingsInterface& si) {
         si.SetBoolValue("EmuCore/CPU/Recompiler", "EnableVU0", false);
         si.SetBoolValue("EmuCore/CPU/Recompiler", "EnableVU1", false);
     }
+    if (cfg.getString("PCSX2HOOK_TIMING", "") == "accurate") {
+        si.SetBoolValue("EmuCore/Speedhacks", "vu1Instant", false);
+        si.SetBoolValue("EmuCore/Speedhacks", "WaitLoop", false);
+        si.SetBoolValue("EmuCore/Speedhacks", "IntcStat", false);
+        si.SetBoolValue("EmuCore/Speedhacks", "vuFlagHack", false);
+    }
     // VU1 alone keeps the EE recompiler's idle-loop skip, so a savestate boot still reaches its
     // target frame quickly while hooks that only the interpreter calls back into still fire.
     if (cfg.isSet("PCSX2HOOK_VU1_INTERP")) {
@@ -184,6 +190,7 @@ bool Core::run(const VMBootParameters& params) {
     diag.getSif().init();
     diag.getGsDraws().init();
     diag.getGsTracker().init();
+    diag.getTiming().init();
     diag.getExec().enableCalls();
     diag.getApi().init();  // after the rest, so their hooked addresses are left alone
 
@@ -227,6 +234,7 @@ bool Core::run(const VMBootParameters& params) {
     diag.getVuInsn().write();
     diag.getVifCmd().write();
     diag.getSpu().write();
+    diag.getTiming().write();
     diag.getIop().write();
     diag.getHw().write();
     diag.getSif().write();

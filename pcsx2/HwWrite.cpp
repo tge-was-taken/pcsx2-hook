@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: GPL-3.0+
 
 #include "Common.h"
+#ifdef PCSX2HOOK
+#include "Hooks.h"
+#endif
 #include "Hardware.h"
 #include "Gif_Unit.h"
 #include "IopHw.h"
@@ -113,6 +116,10 @@ void _hwWrite32( u32 mem, u32 value )
 
 					gifRegs.stat.M3R = gifRegs.mode.M3R;
 					gifRegs.stat.IMT = gifRegs.mode.IMT;
+#ifdef PCSX2HOOK
+					if (Hooks::HasTimingSink())
+						Hooks::OnTimingEvent(Hooks::TimingEvent::Path3Mask, 1, gifRegs.stat.M3P, gifRegs.stat.M3R);
+#endif
 					return;
 				}
 			}

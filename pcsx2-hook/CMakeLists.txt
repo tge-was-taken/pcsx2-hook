@@ -18,6 +18,7 @@ add_library(pcsx2hook SHARED
 	src/trace/iop_trace.cpp
 	src/trace/sif_trace.cpp
 	src/trace/spu_trace.cpp
+	src/trace/timing_trace.cpp
 	src/trace/vif_cmd_trace.cpp
 	src/trace/vif_trace.cpp
 	src/trace/vu_insn_trace.cpp)

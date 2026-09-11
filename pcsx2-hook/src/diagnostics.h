@@ -14,6 +14,7 @@
 #include "trace/iop_trace.h"
 #include "trace/sif_trace.h"
 #include "trace/spu_trace.h"
+#include "trace/timing_trace.h"
 #include "trace/vif_cmd_trace.h"
 #include "trace/vif_trace.h"
 #include "trace/vu_insn_trace.h"
@@ -40,6 +41,7 @@ public:
     VuInsnTrace& getVuInsn() { return mVuInsn; }
     VifCmdTrace& getVifCmd() { return mVifCmd; }
     SpuTrace& getSpu() { return mSpu; }
+    TimingTrace& getTiming() { return mTiming; }
 
 private:
     DumpDir mDumps;
@@ -56,6 +58,7 @@ private:
     VuInsnTrace mVuInsn;
     VifCmdTrace mVifCmd;
     SpuTrace mSpu;
+    TimingTrace mTiming;
 };
 
 }  // namespace pcsx2hook
