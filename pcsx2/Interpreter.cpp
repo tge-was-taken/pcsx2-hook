@@ -173,13 +173,9 @@ static void execI()
 
 	const u32 pc = cpuRegs.pc;
 #ifdef PCSX2HOOK
-
-	// The same hooks the recompiler trampoline runs, so a hooked function behaves identically under
-	// either CPU. Dispatch reads cpuRegs.pc as the hooked address, so this has to run before the
-	// increment below. Nonzero means skip the body; Dispatch already set pc to $ra.
+	// Dispatch reads cpuRegs.pc as the hooked address, so this runs before the increment below.
 	if (Hooks::IsHooked(pc) && Hooks::Dispatch())
 		return;
-
 #endif
 	// We need to increase the pc before executing the memRead32. An exception could appears
 	// and it expects the PC counter to be pre-incremented
@@ -187,8 +183,6 @@ static void execI()
 
 	// interprete instruction
 #ifdef PCSX2HOOK
-	// An instruction fetch is not a data access; without this the delay slot's fetch is recorded
-	// against the branch whose interpret() ran it.
 	Hooks::SetMemTraceSuppressed(true);
 #endif
 	cpuRegs.code = memRead32( pc );
@@ -233,13 +227,9 @@ static void execI()
 
 	cpuBlockCycles += opcode.cycles * (2 - ((cpuRegs.CP0.n.Config >> 18) & 0x1));
 #ifdef PCSX2HOOK
-
-	// bracket the instruction so a sink can diff the register file either side of it and
-	// recover (operands -> result) without modelling any of the arithmetic itself.
 	if (Hooks::HasInsnSink())
 	{
-		// A branch interprets its delay slot through a nested execI, which overwrites cpuRegs.code, so
-		// the pair has to carry this instruction's own word rather than read it back afterwards.
+		// A delay slot runs through a nested execI that overwrites cpuRegs.code.
 		const u32 hookCode = cpuRegs.code;
 		Hooks::OnInsnBefore(pc, hookCode);
 		opcode.interpret();

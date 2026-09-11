@@ -22,7 +22,6 @@
 namespace pcsx2hook {
 constexpr uint32_t kMaxPacketWords = 8192;
 constexpr uint32_t kMaxChain = 8;
-constexpr size_t kMaxRecords = 400000;
 bool SifTrace::isEnabled() {
     static const bool on = Config::get().getValue("PCSX2HOOK_SIF_TRACE") != nullptr;
     return on;

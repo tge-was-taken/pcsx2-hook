@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Did a render change help on the pixels it actually touched?
+"""Did a render change help on the pixels it touched?
 
 Usage: scripts/deltadiff.py <reference.png> <before.ppm> <after.ppm>
 """

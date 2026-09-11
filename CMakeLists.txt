@@ -42,9 +42,9 @@ include(SearchForStuff)
 get_git_version_info()
 write_svnrev_h()
 
-# make common
 option(PCSX2HOOK "Compile the hook and trace taps into the emulator" ON)
 
+# make common
 add_subdirectory(common)
 
 # make pcsx2
@@ -94,7 +94,6 @@ unless you want to work on the recompilers.
 *********************************************************")
 endif()
 
-# The diagnostic library. Off by default so an upstream build is unaffected.
 option(PCSX2HOOK_LIBRARY "Build the pcsx2hook diagnostic library" OFF)
 if(PCSX2HOOK_LIBRARY)
 	enable_testing()

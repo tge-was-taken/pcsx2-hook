@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Pair a capture's native draws with the GS batches in the same manifest.
 
-Usage: drawmatch.py <capture-base> [--all]
-
-The output that matters is what is left over: a draw with no batch is something the hardware did not
-run, and a batch with no draw is something we never submitted. --all adds the matched pairs.
+Usage: drawmatch.py <capture-base> [--all]   (--all also lists the matched pairs)
 """
 import json
 import sys
+
+MIN_MATCH_SCORE = 0.25
+CONTAINED_SCORE = 0.5
 
 
 def bbox_iou(a, b):
@@ -28,7 +28,6 @@ def contained(inner, outer, slack=2.0):
 
 
 def blend_of(d):
-    """The GS ALPHA register's low byte, or None when the draw did not record one."""
     a = d.get("alpha") or ""
     try:
         return int(a, 16) & 0xFF
@@ -50,9 +49,7 @@ def our_draws(rows):
     return out
 
 
-# The VU1 microprogram that produced a batch's geometry, short form. PCSX2HOOK_VU_TRACE stamps it on
-# every GS row and dumps the disassembly under the same id.
-def vu(g):
+def vu_program_id(g):
     return g.get("vu", "0x0")[2:10]
 
 
@@ -72,8 +69,6 @@ def main():
     if len(frames) > 1:
         print(f"note: {len(frames)} GS frames embedded {frames}; using all of them")
 
-    # A GS batch's screen box can be far outside the frame (unclipped vertices), so containment is
-    # the primary test and IoU only breaks ties.
     claims = {id(g): [] for g in gs}
     unmatched, unusable = [], []
     for d in ours:
@@ -81,22 +76,17 @@ def main():
         for g in gs:
             if bool(g["tme"]) != bool(d["textured"]):
                 continue
-            # The blend register too, or a large untextured draw matches any large untextured batch:
-            # p3-skill-effect-c's two back-facing washes paired with unrelated batches on bbox alone,
-            # and a false pair is worse than a miss.
             if blend_of(d) is not None and blend_of(d) != int(g["alpha"], 16) & 0xFF:
                 continue
             score = bbox_iou(d["bbox"], g["bbox"])
-            # Containment either way: a GS batch aggregates several draws, and a draw whose box is
-            # only a bound (scrClipped) can contain the batch instead.
             if contained(d["bbox"], g["bbox"]) or (d["clipped"] and contained(g["bbox"], d["bbox"])):
-                score = max(score, 0.5)
+                score = max(score, CONTAINED_SCORE)
             if score > best_score:
                 best, best_score = g, score
-        if best is not None and best_score >= 0.25:
+        if best is not None and best_score >= MIN_MATCH_SCORE:
             claims[id(best)].append(d)
         elif d["clipped"]:
-            unusable.append(d)  # crosses the near plane: the box is a bound, so silence is not news
+            unusable.append(d)
         else:
             unmatched.append(d)
 
@@ -117,13 +107,14 @@ def main():
             b = [int(v) for v in g["bbox"]]
             print(f"  f{g['f']} b{g['i']:<4} nv{g['nverts']:<5} tme{g['tme']} "
                   f"alpha{g['alpha'][-4:]} rgba({g['r']},{g['g']},{g['b_']},{g['a_']}) "
-                  f"vu{vu(g)} bbox{b}")
+                  f"vu{vu_program_id(g)} bbox{b}")
     if show_all:
         print("\nmatched:")
         for g in gs:
             if claims[id(g)]:
                 ids = ",".join(str(d["i"]) for d in claims[id(g)])
-                print(f"  f{g['f']} b{g['i']:<4} nv{g['nverts']:<5} vu{vu(g)} <- draws {ids}")
+                print(f"  f{g['f']} b{g['i']:<4} nv{g['nverts']:<5} vu{vu_program_id(g)} "
+                      f"<- draws {ids}")
     return 0
 
 

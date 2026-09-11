@@ -19,7 +19,7 @@
 #include <utility>
 #include <vector>
 
-#include "DebugTools/Debug.h"  // disVU1MicroUF/LF: PCSX2's VU1 disassembler
+#include "DebugTools/Debug.h"
 #include "config.h"
 #include "diagnostics.h"
 #include "trace/dump_dir.h"
@@ -28,38 +28,6 @@ namespace pcsx2hook {
 size_t s_depth = 0;
 size_t s_execTotalSteps = 0;
 
-// Temporary: records how the draw stack interleaves with the VIF's own MPG and MSCAL, which is the
-// one thing that says whether a draw is still open when the work it caused reaches the VU.
-namespace {
-constexpr size_t kMaxProbeRows = 6000;
-uint32_t s_probeSeq = 0;
-std::mutex s_probeMutex;
-
-bool probeEnabled() {
-    static const bool on = Config::get().getValue("PCSX2HOOK_DRAW_PROBE") != nullptr;
-    return on;
-}
-
-struct ProbeEvent {
-    uint32_t seq;
-    const char* kind;
-    uint32_t depth;
-    uint32_t arg;
-    std::string label;
-};
-std::vector<ProbeEvent> s_probeRows;
-
-void probeAdd(const char* kind, uint32_t arg, const char* label) {
-    if (!probeEnabled()) {
-        return;
-    }
-    const std::lock_guard<std::mutex> lock(s_probeMutex);
-    if (s_probeRows.size() >= kMaxProbeRows) {
-        return;
-    }
-    s_probeRows.push_back({s_probeSeq++, kind, uint32_t(s_depth), arg, label ? label : ""});
-}
-}  // namespace
 uint64_t hashWords(const uint32_t* words, uint32_t count) {
     uint64_t h = 0xCBF29CE484222325ull;
     for (uint32_t i = 0; i < count; i++) {
@@ -76,13 +44,11 @@ void DrawTrace::push(const DrawContext& ctx) {
         mStack[s_depth] = ctx;
     }
     s_depth++;
-    probeAdd("push", ctx.object, ctx.label);
 }
 void DrawTrace::pop() {
     if (s_depth > 0) {
         s_depth--;
     }
-    probeAdd("pop", 0, "");
 }
 const char* DrawTrace::getCurrentLabel() {
     return (s_depth > 0 && s_depth <= kMaxDepth) ? mStack[s_depth - 1].label : "";
@@ -91,15 +57,10 @@ bool DrawTrace::isVuTraceEnabled() {
     static const bool on = Config::get().getValue("PCSX2HOOK_VU_TRACE") != nullptr;
     return on;
 }
-void DrawTrace::onVu1Upload(uint32_t addr, const uint32_t* words, uint32_t count, StreamPos at) {
-    (void)at;
+void DrawTrace::onVu1Upload(uint32_t addr, const uint32_t* words, uint32_t count) {
     if (!words || count == 0) {
         return;
     }
-    // addr is a byte offset, and the VIF wraps at the end of micro memory as PCSX2's own split
-    // handling does. Chunks are merged rather than recorded: one MPG is as much of a program as
-    // fit in that VIF packet, so a chunk is not a program and its length is not the length.
-    probeAdd("mpg", addr, "");
     const std::lock_guard<std::mutex> lock(mMutex);
     const uint32_t start = (addr / 8) % kVu1Instrs;
     if (start != mLastUploadEnd) {
@@ -111,7 +72,6 @@ void DrawTrace::onVu1Upload(uint32_t addr, const uint32_t* words, uint32_t count
     }
 }
 uint64_t DrawTrace::resolveProgramAt(uint32_t pc) {
-    probeAdd("mscal", pc, getCurrentLabel());
     if (pc >= kVu1Instrs) {
         return mRunning;
     }
@@ -165,11 +125,8 @@ uint64_t DrawTrace::getRunningProgram() {
     return mRunning;
 }
 
-// The upper word's I bit makes the lower word a float immediate rather than an instruction, which
-// is why the lower half is not always disassembled.
 void addCode(JsonObject& row, const std::vector<uint32_t>& code, uint32_t basePc, size_t last) {
     constexpr uint32_t kIBit = 1u << 31;
-    // PCSX2's disassembler indents what it returns, which is padding for its own listing.
     const auto trim = [](const char* text) {
         while (text && *text == ' ') text++;
         return text ? text : "";
@@ -257,7 +214,6 @@ void DrawTrace::writeVuTrace() {
             byFrame[sp.frame].emplace_back(sp.batch, hash);
         }
     }
-    // Which programs were resident before which batch, which is the correlation to a draw.
     for (auto& [frame, uploads] : byFrame) {
         std::sort(uploads.begin(), uploads.end());
         uploads.erase(std::unique(uploads.begin(), uploads.end()), uploads.end());
@@ -569,33 +525,6 @@ void DrawTrace::writeVuExecTrace() {
     std::fclose(f);
     std::printf("[vu] wrote %s (%zu runs, %zu instructions)\n", out.c_str(), runs.size(),
                 totalRows);
-}
-
-void DrawTrace::writeDrawProbe() {
-    if (!probeEnabled()) {
-        return;
-    }
-    std::vector<ProbeEvent> rows;
-    {
-        const std::lock_guard<std::mutex> lock(s_probeMutex);
-        rows = s_probeRows;
-    }
-    const std::string out = Diagnostics::get().getDumps().getPath("draw_probe.jsonl");
-    FILE* f = std::fopen(out.c_str(), "w");
-    if (!f) {
-        return;
-    }
-    JsonTable table(f, {"seq", "kind", "depth", "arg", "label"});
-    for (const ProbeEvent& e : rows) {
-        table.addUint(e.seq)
-            .addString(e.kind)
-            .addUint(e.depth)
-            .addHex(e.arg, 8)
-            .addString(e.label.c_str())
-            .endRow();
-    }
-    std::fclose(f);
-    std::printf("[draw] wrote %s (%zu events)\n", out.c_str(), rows.size());
 }
 
 void vu1JrSink(uint32_t pc, uint32_t reg, uint32_t target) {

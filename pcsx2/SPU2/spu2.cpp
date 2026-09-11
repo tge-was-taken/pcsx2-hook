@@ -450,7 +450,7 @@ u16 SPU2read(u32 rmem)
 void SPU2write(u32 rmem, u16 value)
 {
 #ifdef PCSX2HOOK
-	Hooks::OnHwAccess(true, rmem, value, 2, false); // SPU2 is not on the IOP hw page
+	Hooks::OnHwAccess(true, rmem, value, 2, false);
 #endif
 	// Note: Reverb/Effects are very sensitive to having precise update timings.
 	// If the SPU2 isn't in in sync with the IOP, samples can end up playing at rather

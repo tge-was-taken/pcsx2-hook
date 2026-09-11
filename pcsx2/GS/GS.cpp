@@ -97,15 +97,11 @@ static RenderAPI GetAPIForRenderer(GSRendererType renderer)
 		case GSRendererType::Metal:
 			return RenderAPI::Metal;
 #endif
-
 #ifdef PCSX2HOOK
 #ifdef ENABLE_VULKAN
 		case GSRendererType::SW:
 		case GSRendererType::Null:
-			// Neither rasterizes on the GPU, so the device only presents and a software Vulkan
-			// implementation is fine, and unlike OpenGL it needs no surface. Asking the usual
-			// preferred renderer instead would reject it, because that check exists to keep hardware
-			// rasterization off a software GPU, which cannot apply when nothing rasterizes there.
+			// Only presents, so a software Vulkan device works, and unlike OpenGL it needs no surface.
 			if (!GSDeviceVK::EnumerateGPUs().empty())
 				return RenderAPI::Vulkan;
 			return GetAPIForRenderer(GSUtil::GetPreferredRenderer());

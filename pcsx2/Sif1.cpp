@@ -42,7 +42,6 @@ static __fi bool WriteEEtoFifo()
 	}
 
 #ifdef PCSX2HOOK
-	// EE -> IOP payload, read before the FIFO consumes it.
 	Hooks::OnSifTransfer(1, false, sif1ch.madr, writeSize, (const u32*)ptag, writeSize << 2);
 #endif
 	sif1.fifo.write((u32*)ptag, writeSize << 2);
@@ -326,7 +325,7 @@ __fi void  EEsif1Interrupt()
 __fi void dmaSIF1()
 {
 #ifdef PCSX2HOOK
-	Hooks::OnSifKick(1); // attribute to the guest code that kicked it
+	Hooks::OnSifKick(1);
 #endif
 	SIF_LOG("dmaSIF1 %s", sif1ch.cmqt_to_str().c_str());
 

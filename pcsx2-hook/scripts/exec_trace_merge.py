@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Union the per-scene execution traces into one index, per disc.
-
-A single scene only ever exercises its own code; what bounds a native runtime's work is the union
-over every scene plus the boot. Coverage unions, counts sum, and each function and syscall records
-which scenes reached it, since "one scene needs this" and "everything needs this" are different facts.
-"""
+"""Union per-scene execution traces into one index."""
 import argparse
 import collections
 import json
@@ -13,7 +8,6 @@ import sys
 
 
 def readTable(path):
-    """A JSONL table: a header array of column names, then one array per row."""
     if not path.exists():
         return []
     with path.open() as f:
@@ -33,12 +27,9 @@ def writeTable(path, columns, rows):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("dirs", nargs="+", help="scene trace directories (and/or a boot trace directory)")
-    ap.add_argument("--out", required=True, help="where to write the union")
-    # Trace directories from several discs can share a parent, and their coverage must not be
-    # unioned: the same address means different code. The prefix is whatever the caller names its
-    # scenes with, so "--disc p4" keeps p4-* and drops the rest.
-    ap.add_argument("--disc", help="only merge scenes whose directory name starts with this")
+    ap.add_argument("dirs", nargs="+", help="scene or boot trace directories")
+    ap.add_argument("--out", required=True, help="output directory")
+    ap.add_argument("--disc", help="only merge directories whose name starts with this")
     args = ap.parse_args()
 
     out = pathlib.Path(args.out)
@@ -53,8 +44,6 @@ def main():
     syscallName = {}
     syscallScenes = collections.defaultdict(set)
     sites = {}
-    # Thread ids are assigned per run, so the same tid can mean different threads in two scenes.
-    # Key the union on the entry point, which is stable.
     threadScenes = collections.defaultdict(set)
     threadPrio = {}
     threadName = {}
@@ -63,7 +52,7 @@ def main():
     for d in args.dirs:
         path = pathlib.Path(d)
         if not path.is_dir():
-            continue # a glob picks up the per-scene .log beside each directory
+            continue
         slug = path.name
         if args.disc and not slug.startswith(args.disc):
             continue
@@ -109,7 +98,7 @@ def main():
     writeTable(out / "union_threads.jsonl", ["entry", "scenes", "priorities", "symbol"],
                [[f"{e:08X}", len(threadScenes[e]), sorted(threadPrio[e], key=int), threadName[e]]
                 for e in sorted(threadScenes, key=lambda e: -len(threadScenes[e]))])
-    # Same shape the runtime reads back as PCSX2HOOK_EXEC_TRACE_SITES.
+    # The runtime reads this file back as PCSX2HOOK_EXEC_TRACE_SITES.
     writeTable(out / f"sites-{args.disc or 'all'}.jsonl", ["site", "num"],
                [[f"{s:08X}", sites[s]] for s in sorted(sites)])
 

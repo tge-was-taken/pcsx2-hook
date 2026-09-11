@@ -68,6 +68,7 @@ private:
     void recordSample(CallSite& site, const Hooks::Context& ctx, uint32_t result);
     static void writeSamples(JsonTable& t, const CallSite& site, bool withResult);
 
+    // Generated code holds these addresses, so the arrays must never move.
     uint64_t mBlockCounts[kMaxBlocks];
     uint32_t mBlockThreads[kMaxBlocks];
     uint32_t mExecThreadBit = 0;

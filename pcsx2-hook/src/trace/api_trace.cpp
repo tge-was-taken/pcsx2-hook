@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0+
 
 #include "trace/api_trace.h"
+#include "trace/guest_memory.h"
+#include "trace/hash.h"
 #include "trace/json.h"
 #include "trace/table.h"
 
@@ -22,19 +24,6 @@
 #include "symbols.h"
 
 namespace pcsx2hook {
-
-namespace {
-// PSM maps through the emulator's own tables. The length check keeps a read from running off the
-// end of main RAM, which PSM alone does not bound.
-const void* readableHost(uint32_t addr, size_t len) {
-    if ((addr & 0x1FFFFFFFu) + len > Ps2MemSize::MainRam) return nullptr;
-    return PSM(addr);
-}
-}  // namespace
-
-void ApiTrace::hashMix(uint64_t& h, uint64_t v) {
-    h ^= v + 0x9E3779B97F4A7C15ull + (h << 6) + (h >> 2);
-}
 
 void ApiTrace::emitRun() {
     if (mRunLen == 0 || !mSeqFile) return;
@@ -108,7 +97,6 @@ Hooks::Result ApiTrace::onEnter(Hooks::Context& ctx) {
     return Hooks::Result::Continue;
 }
 
-// A long run of zeroes becomes *N* rather than 2N characters: an argument window is mostly padding.
 std::string ApiTrace::hexBlob(const uint8_t* b, uint32_t n) {
     std::string out;
     char buf[16];
@@ -147,14 +135,14 @@ void ApiTrace::onExit(Hooks::Context& ctx) {
     }
 
     uint64_t h = 1469598103934665603ull;
-    hashMix(h, c.pc);
-    for (uint32_t i = 0; i < 4; i++) hashMix(h, c.gpr[i]);
+    h = hashMix(h, c.pc);
+    for (uint32_t i = 0; i < 4; i++) h = hashMix(h, c.gpr[i]);
     for (uint32_t i = 0; i < 4; i++) {
         uint32_t bits;
         std::memcpy(&bits, &c.fpr[i], 4);
-        hashMix(h, bits);
+        h = hashMix(h, bits);
     }
-    hashMix(h, ctx.v0);
+    h = hashMix(h, ctx.v0);
 
     mCalls++;
     const auto it = mDataIds.find(h);
@@ -282,19 +270,19 @@ void ApiTrace::init() {
     }
 
     const char* out = Config::get().getValue("PCSX2HOOK_API_TRACE");
-    const std::string path = (!out || !*out || std::strcmp(out, "1") == 0)
-                                 ? Diagnostics::get().getDumps().getPath("api_trace.jsonl")
-                                 : std::string(out);
-    mFile = std::fopen((path + ".data.jsonl").c_str(), "w");
-    mSeqFile = std::fopen((path + ".seq.jsonl").c_str(), "w");
+    mPath = (!out || !*out || std::strcmp(out, "1") == 0)
+                ? Diagnostics::get().getDumps().getPath("api_trace.jsonl")
+                : std::string(out);
+    mFile = std::fopen((mPath + ".data.jsonl").c_str(), "w");
+    mSeqFile = std::fopen((mPath + ".seq.jsonl").c_str(), "w");
     if (!mFile || !mSeqFile) {
-        std::fprintf(stderr, "[api] cannot open %s.{data.jsonl,seq.jsonl}\n", path.c_str());
+        std::fprintf(stderr, "[api] cannot open %s.{data.jsonl,seq.jsonl}\n", mPath.c_str());
         return;
     }
     mSeq = std::make_unique<JsonTable>(mSeqFile, std::initializer_list<const char*>{"dataId", "repeat"});
     Hooks::AddGuestMemSink(&apiMemSink);
     std::fprintf(stderr, "[api] enabled %zu functions (%zu unresolved) -> %s\n", enabled, missing,
-                 path.c_str());
+                 mPath.c_str());
 }
 void ApiTrace::write() {
     if (!isEnabled() || !mFile) return;
@@ -305,8 +293,7 @@ void ApiTrace::write() {
         std::fclose(mSeqFile);
         mSeqFile = nullptr;
     }
-    const std::string sum =
-        std::string(Config::get().getValue("PCSX2HOOK_API_TRACE")) + ".summary.jsonl";
+    const std::string sum = mPath + ".summary.jsonl";
     uint64_t total = 0, capped = 0;
     if (FILE* g = std::fopen(sum.c_str(), "w")) {
         JsonTable t(g, {"pc", "function", "calls", "recorded", "sampledOneIn"});

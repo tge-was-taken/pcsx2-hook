@@ -13,10 +13,6 @@
 
 namespace pcsx2hook {
 
-// One JSON object per trace row, written straight out rather than built as a document: a row is
-// emitted per GS batch, so nothing here allocates a tree. Naming each field beside its value is the
-// point, since the printf it replaces carried sixty specifiers and seventy positional arguments,
-// where one insertion silently shifts every field after it into the wrong column.
 class JsonObject {
 public:
     JsonObject() : mWriter(mBuffer) { mWriter.StartObject(); }
@@ -39,8 +35,6 @@ public:
         return *this;
     }
 
-    // Rounded rather than written at full precision: these read as measurements, and a reader
-    // diffing two traces should not see a difference that is only float noise.
     JsonObject& addReal(const char* key, double value, int decimals = 6) {
         mWriter.Key(key);
         mWriter.SetMaxDecimalPlaces(decimals);
@@ -55,15 +49,12 @@ public:
         return *this;
     }
 
-    // Hex stays a string rather than becoming a number a reader has to reformat. The two spellings
-    // are not interchangeable: each trace's readers expect the one that trace already wrote.
     JsonObject& addHex(const char* key, uint64_t value, int digits) {
         char buf[24];
         std::snprintf(buf, sizeof(buf), "0x%0*llX", digits, static_cast<unsigned long long>(value));
         return addString(key, buf);
     }
 
-    // A 128-bit register reads as one 32-character field, not two halves a reader has to rejoin.
     JsonObject& addHex128(const char* key, uint64_t hi, uint64_t lo) {
         char buf[40];
         std::snprintf(buf, sizeof(buf), "%016llX%016llX", static_cast<unsigned long long>(hi),
@@ -110,8 +101,6 @@ public:
         return *this;
     }
 
-    // Arrays and nested objects are built in place rather than assembled as a string first, so a
-    // loop that writes elements cannot leave the row half-punctuated.
     JsonObject& beginArray(const char* key) {
         mWriter.Key(key);
         mWriter.StartArray();
@@ -168,7 +157,6 @@ public:
         return pushString(buf);
     }
 
-    // Closes the object and hands over the row, newline included: every consumer reads JSONL.
     std::string take() {
         mWriter.EndObject();
         return std::string(mBuffer.GetString(), mBuffer.GetSize()) + "\n";

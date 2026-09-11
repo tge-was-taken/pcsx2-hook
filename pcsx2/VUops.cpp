@@ -3406,10 +3406,7 @@ static void VU1MI_BAL() { _vuBAL(&VU1); }
 #ifdef PCSX2HOOK
 static void VU1MI_JR()
 {
-	// which register a computed jump actually read, and what it resolved to. The static
-	// disassembly cannot know this (the value comes from an IADDIU dozens of instructions earlier,
-	// picked by a runtime branch), and reading the sequentially-next instructions instead is wrong:
-	// they are not necessarily the ones that execute. _Is_ expands against a local named VU.
+	// _Is_ expands against a local named VU.
 	VURegs* VU = &VU1;
 	Hooks::OnVu1Jr(VU1.VI[REG_TPC].UL, _Is_, VU1.VI[_Is_].US[0] * 8);
 	_vuJR(&VU1);

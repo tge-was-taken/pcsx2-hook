@@ -2504,9 +2504,7 @@ void GSState::FlushPrim()
 	if (m_index->tail > 0)
 	{
 #ifdef PCSX2HOOK
-		GL_REG("FlushPrim ctxt %d", PRIM->CTXT); // Ground truth for a render comparison: the resolved register state this batch will
-		// rasterize with, downstream of VU1 so the vertex colour is the post-lighting one.
-		// XY is 12.4 fixed point biased by XYOFFSET, so this is the batch's rect in screen pixels.
+		GL_REG("FlushPrim ctxt %d", PRIM->CTXT);
 		Hooks::GsDraw hookDraw{};
 		hookDraw.bbox[0] = hookDraw.bbox[1] = 1e9f;
 		hookDraw.bbox[2] = hookDraw.bbox[3] = -1e9f;
@@ -2540,15 +2538,13 @@ void GSState::FlushPrim()
 		hookDraw.colclamp = m_draw_env->COLCLAMP.CLAMP;
 		hookDraw.fba = m_context->FBA.FBA;
 		hookDraw.dthe = m_draw_env->DTHE.DTHE;
-		// Let a sink read the buffer this batch is about to draw into, so it can dump the emulated
-		// frame between batches. Only the three colour formats a frame buffer can be.
 		struct HookFbRead
 		{
 			GSState* state;
 			const GSLocalMemory* mem;
 			u32 fbp, fbw, psm;
 		};
-		// Static because the sink reads the finished frame at the next vsync, long after this returns.
+		// The sink reads the frame at the next vsync, after this returns.
 		static thread_local HookFbRead hookFb;
 		hookFb = HookFbRead{this, &m_mem, m_context->FRAME.Block(), m_context->FRAME.FBW,
 			m_context->FRAME.PSM};
@@ -2562,8 +2558,7 @@ void GSState::FlushPrim()
 		hookDraw.dispFbp1 = PCRTCDisplays.PCRTCDisplays[1].enabled
 								 ? u32(PCRTCDisplays.PCRTCDisplays[1].Block())
 								 : ~0u;
-		// Invalidating the frame buffer's own pages is what drains the software rasterizer's worker
-		// threads, so a read afterwards holds every batch before this one and no part of a later one.
+		// Invalidating the frame buffer's pages drains the software rasterizer's worker threads.
 		hookDraw.syncPixels = [](const void* ctx) {
 			const HookFbRead* fb = static_cast<const HookFbRead*>(ctx);
 			GIFRegBITBLTBUF hookBuf = {};
@@ -2578,8 +2573,6 @@ void GSState::FlushPrim()
 			{
 				case PSMCT24: return fb->mem->ReadFrame24(x, y, fb->fbp, fb->fbw);
 				case PSMCT16: return fb->mem->ReadFrame16(x, y, fb->fbp, fb->fbw);
-				// Its own address function, not a colour variant of PSMCT16: sharing one scrambled
-				// every PAL frame buffer into blocks.
 				case PSMCT16S: return fb->mem->ReadFrame16S(x, y, fb->fbp, fb->fbw);
 				default: return fb->mem->ReadPixel32(x, y, fb->fbp, fb->fbw);
 			}

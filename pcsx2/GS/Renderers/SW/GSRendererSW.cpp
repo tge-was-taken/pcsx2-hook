@@ -1532,7 +1532,6 @@ bool GSRendererSW::GetScanlineGlobalData(SharedData* data)
 		hookBatch++;
 	}
 #endif
-
 	if (gd.sel.prim == GS_SPRITE_CLASS && !gd.sel.ftest && !gd.sel.ztest && data->bbox.eq(data->bbox.rintersect(data->scissor))) // TODO: check scissor horizontally only
 	{
 		gd.sel.notest = 1;

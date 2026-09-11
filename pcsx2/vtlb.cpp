@@ -333,9 +333,6 @@ void TAKES_R128 vtlb_memWrite128(u32 mem, r128 value)
 #ifdef PCSX2HOOK
 }
 
-// one tap per direction, wrapping every return path of the two implementations above. Hooking
-// here rather than deriving the address from the instruction encoding is what makes device and
-// unaligned accesses recordable at all: this is the real address, size and value.
 template <typename DataType>
 DataType vtlb_memRead(u32 addr)
 {
@@ -353,8 +350,6 @@ void vtlb_memWrite(u32 addr, DataType data)
 	hookVtlbWrite<DataType>(addr, data);
 }
 
-// The 128-bit pair are their own functions, not instantiations of the templates above, so lq and sq
-// need their own tap or they record no access at all.
 RETURNS_R128 vtlb_memRead128(u32 mem)
 {
 	const r128 value = hookVtlbRead128(mem);

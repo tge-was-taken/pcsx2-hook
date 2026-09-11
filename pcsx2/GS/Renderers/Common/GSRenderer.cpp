@@ -581,12 +581,9 @@ void GSRenderer::EndPresentFrame()
 }
 
 void GSRenderer::VSync(u32 field, bool registers_written, bool idle_frame)
-#ifdef PCSX2HOOK
-{ // The frame boundary as the GS thread sees it. Arming the trace from the EE thread
-	// races the MTGS ring, so every draw is stamped with this counter and selected exactly instead.
-	Hooks::OnGsVSync();
-#else
 {
+#ifdef PCSX2HOOK
+	Hooks::OnGsVSync();
 #endif
 	if (GSConfig.ShouldDump(s_n, g_perfmon.GetFrame()))
 	{

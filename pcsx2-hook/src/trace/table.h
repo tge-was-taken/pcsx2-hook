@@ -14,8 +14,6 @@
 
 namespace pcsx2hook {
 
-// A table as JSONL: one header array of column names, then one array per row. These files run to
-// hundreds of thousands of rows, so a key per cell would cost more than the data.
 class JsonTable {
 public:
     JsonTable(std::FILE* file, std::initializer_list<const char*> columns)
@@ -66,8 +64,6 @@ public:
         return addString(buf);
     }
 
-    // A cell that holds a list stays a list rather than a delimiter-joined string a reader has to
-    // split back apart.
     JsonTable& beginCellArray() {
         begin();
         mWriter->StartArray();
@@ -106,8 +102,6 @@ public:
         return *this;
     }
 
-    // Reports a row that does not match the header rather than writing it, which is the drift a
-    // positional printf could not catch.
     void endRow() {
         if (!mWriter) return;
         if (mCell != mColumns) {

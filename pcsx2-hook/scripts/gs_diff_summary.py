@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""Aggregate the per-scene reports gs_diff_all.sh wrote into one table.
-
-Usage: scripts/gs_diff_summary.py [dir]   (default /tmp/pcsx2hook-gsdiff)
-"""
+"""Aggregate the gs_diff reports in a directory (default /tmp/pcsx2hook-gsdiff) into one table."""
 import collections
 import glob
 import re
@@ -18,8 +15,7 @@ def parse(path):
     diffs, field = {}, None
     for line in open(path):
         if line.startswith("GS batches:"):
-            nums = re.findall(r"\d+", line)
-            batches, draws = int(nums[0]), int(nums[2])  # batches, clears, draws
+            batches, _, draws = (int(n) for n in re.findall(r"\d+", line)[:3])
         s = line.strip()
         for f in FIELDS:
             if s.startswith(f) and ("SET DIFFERS" in s or "same value set" in s):
@@ -53,23 +49,15 @@ def main():
     print("\n'.' = same value set. NgMo = N states only the GS produced, M only the renderer.")
     print("Counts are not comparable between the two columns; see gs_diff.py.")
 
-    print("\n--- states only the GS produced, by field (scene count) ---")
-    for f in FIELDS:
-        c = collections.Counter()
-        for _, _, _, diffs in scenes:
-            for v in set(diffs.get(f, ([], []))[0]):
-                c[v] += 1
-        if c:
-            print(f"  {f}: " + ", ".join(f"{v} x{n}" for v, n in c.most_common()))
-
-    print("\n--- states only the renderer produced, by field (scene count) ---")
-    for f in FIELDS:
-        c = collections.Counter()
-        for _, _, _, diffs in scenes:
-            for v in set(diffs.get(f, ([], []))[1]):
-                c[v] += 1
-        if c:
-            print(f"  {f}: " + ", ".join(f"{v} x{n}" for v, n in c.most_common()))
+    for side, producer in enumerate(("the GS", "the renderer")):
+        print(f"\n--- states only {producer} produced, by field (scene count) ---")
+        for f in FIELDS:
+            c = collections.Counter()
+            for _, _, _, diffs in scenes:
+                for v in set(diffs.get(f, ([], []))[side]):
+                    c[v] += 1
+            if c:
+                print(f"  {f}: " + ", ".join(f"{v} x{n}" for v, n in c.most_common()))
     return 0
 
 

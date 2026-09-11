@@ -38,8 +38,6 @@ _vifT void vifTransferLoop(u32* &data) {
 			vifXRegs.code = data[0];
 			vifX.cmd	  = data[0] >> 24;
 #ifdef PCSX2HOOK
-
-			// the exact code word (CMD/NUM/IMM), in processed order.
 			Hooks::OnVifCode(idx, data[0]);
 #endif
 

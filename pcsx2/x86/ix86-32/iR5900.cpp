@@ -780,12 +780,7 @@ static void recExecute()
 #ifdef PCSX2HOOK
 }
 
-// Synchronous EE function call. Runs a guest function to completion from a consistent EE-thread point
-// (a hook handler) and returns $v0. Reuses the recompiler's own fastjmp exit: $ra is pointed at a
-// caller-provided marker whose trampoline calls eeSyncCallReturn(), which fastjmps back here. EE
-// interrupts are masked (Status.EIE) for the duration so no ISR vectors into the call; the caller
-// suppresses its own hooks so the target's body runs un-intercepted. For non-blocking functions only.
-// Integer/pointer args go in $a0-$a3,$t0-$t3 (up to 8); float args in $f12-$f19 (up to 8).
+// $ra points at a marker whose trampoline calls eeSyncCallReturn, which fastjmps back here.
 static fastjmp_buf s_syncCallJmp;
 static int s_syncCallDepth = 0;
 
@@ -796,18 +791,17 @@ int eeInSyncCall()
 
 void eeSyncCallReturn()
 {
-	fastjmp_jmp(&s_syncCallJmp, 1); // never returns; unwinds to eeRunFunctionSync's fastjmp_set
+	fastjmp_jmp(&s_syncCallJmp, 1);
 }
 
 u32 eeRunFunctionSync(u32 pc, const u32* gpr, int ngpr, const float* fpr, int nfpr, u32 returnMarker)
 {
-	static const int kArgGpr[8] = {4, 5, 6, 7, 8, 9, 10, 11}; // $a0-$a3, $t0-$t3
+	static const int kArgGpr[8] = {4, 5, 6, 7, 8, 9, 10, 11};
 	if (ngpr > 8)
 		ngpr = 8;
 	if (nfpr > 8)
 		nfpr = 8;
 
-	// Save the register file we clobber; leave the timing counters (cycle/nextEventCycle) advancing.
 	const GPRregs savedGPR = cpuRegs.GPR;
 	const GPR_reg savedHI = cpuRegs.HI;
 	const GPR_reg savedLO = cpuRegs.LO;
@@ -818,16 +812,16 @@ u32 eeRunFunctionSync(u32 pc, const u32* gpr, int ngpr, const float* fpr, int nf
 	FPRreg savedFpr[8];
 	for (int i = 0; i < nfpr; i++)
 		savedFpr[i] = fpuRegs.fpr[12 + i];
-	const fastjmp_buf savedJmp = s_syncCallJmp; // support nested sync calls
+	const fastjmp_buf savedJmp = s_syncCallJmp;
 
 	for (int i = 0; i < ngpr; i++)
-		cpuRegs.GPR.r[kArgGpr[i]].SD[0] = static_cast<s32>(gpr[i]); // sign-extend into the 64-bit reg
+		cpuRegs.GPR.r[kArgGpr[i]].SD[0] = static_cast<s32>(gpr[i]);
 	for (int i = 0; i < nfpr; i++)
 		fpuRegs.fpr[12 + i].f = fpr[i];
 	cpuRegs.GPR.n.ra.UL[0] = returnMarker;
 	cpuRegs.pc = pc;
 	cpuRegs.IsDelaySlot = 0;
-	cpuRegs.CP0.n.Status.b.EIE = 0; // no interrupt may vector into the call
+	cpuRegs.CP0.n.Status.b.EIE = 0;
 
 	s_syncCallDepth++;
 	if (!fastjmp_set(&s_syncCallJmp))
@@ -1765,18 +1759,15 @@ void recompileNextInstruction(bool delayslot, bool swapped_delay_slot)
 		Patch::ApplyDynamicPatches(pc);
 
 #ifdef PCSX2HOOK
-	// Middleware hook: run the native handler at the function entry. It returns whether to
-	// skip the original body (Exit -> return to $ra via the dispatcher) or run it (Continue).
 	if (!delayslot && Hooks::IsHooked(pc))
 	{
 		iFlushCall(FLUSH_EVERYTHING | FLUSH_PC);
-		xFastCall((void*)Hooks::Dispatch); // returns nonzero to skip the body
+		xFastCall((void*)Hooks::Dispatch);
 		xTEST(eax, eax);
-		xForwardJZ8 runBody; // Continue: fall through to the real body
-		xJMP(DispatcherReg); // Exit: Dispatch set pc = $ra, resume the caller
+		xForwardJZ8 runBody;
+		xJMP(DispatcherReg);
 		runBody.SetTarget();
 	}
-
 #endif
 	// add breakpoint
 	if (!delayslot)
@@ -2285,8 +2276,7 @@ static bool recSkipTimeoutLoop(s32 reg, bool is_timeout_loop)
 static void recRecompile(const u32 startpc)
 {
 #ifdef PCSX2HOOK
-	// The recompiler reads guest code through memRead32 while compiling, which a data-access trace
-	// would otherwise record as the running function's reads. Suppressed for the compile only.
+	// Compiling reads guest code through memRead32, which is not a data access.
 	struct CompileGuard
 	{
 		CompileGuard() { Hooks::SetMemTraceSuppressed(true); }
@@ -2431,9 +2421,7 @@ static void recRecompile(const u32 startpc)
 
 		// stop before breakpoints
 #ifdef PCSX2HOOK
-		// Force a block boundary BEFORE a hooked address (i != startpc) so it begins its own
-		// block; when the block already starts at the hook, fall through and emit the trampoline +
-		// original body inline (a zero-length block here would stall the recompiler).
+		// A hooked address starts its own block; ending a block at its own start would stall.
 		if (isBreakpointNeeded(i) != 0 || isMemcheckNeeded(i) != 0 || (i != startpc && Hooks::IsHooked(i)))
 #else
 		if (isBreakpointNeeded(i) != 0 || isMemcheckNeeded(i) != 0)
@@ -2726,22 +2714,16 @@ StartRecomp:
 	if (doRecompilation)
 	{
 #ifdef PCSX2HOOK
-		// coverage. A block is straight-line, so one `add qword [slot], 1` at its head records
-		// that every instruction in [startpc, s_nEndBlock) ran. Unarmed, this returns null and emits
-		// nothing, so an untraced build pays for a compile-time branch and no runtime cost at all.
 		const Hooks::ExecBlockSlots hookBlock = Hooks::ExecBlockCounter(startpc, s_nEndBlock);
 		if (hookBlock.count)
 		{
 			xADD(ptr64[hookBlock.count], 1);
-			// Which EE threads ran this block. The live thread's bit is a host global the trace keeps
-			// current, so this stays two instructions and no call.
 			if (hookBlock.threads && Hooks::ExecThreadBit())
 			{
 				xMOV(eax, ptr32[Hooks::ExecThreadBit()]);
 				xOR(ptr32[hookBlock.threads], eax);
 			}
 		}
-
 #endif
 		// Finally: Generate x86 recompiled code!
 		g_pCurInstInfo = s_pInstCache;

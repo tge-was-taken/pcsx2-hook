@@ -28,7 +28,6 @@ private:
     std::mutex mMutex;
 };
 
-// Thunks for the emulator's sinks, which take a plain function pointer.
 void vifTagSink(uint32_t tadr, uint32_t id, uint32_t madr, uint32_t qwc);
 void vifCodeSink(uint32_t idx, uint32_t codeWord);
 

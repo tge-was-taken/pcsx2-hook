@@ -201,7 +201,6 @@ template< typename T>
 static __ri void IopHwTraceLog( u32 addr, T val, bool mode )
 {
 #ifdef PCSX2HOOK
-	// the IOP half of the same tap.
 	if (Hooks::HasHwAccessSink())
 		Hooks::OnHwAccess(true, addr, static_cast<u64>(val), sizeof(T), mode);
 #endif

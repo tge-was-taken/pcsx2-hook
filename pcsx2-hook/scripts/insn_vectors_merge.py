@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-"""Merge per-scene instruction vectors into one corpus, deduplicated on the operands.
-
-Each scene only reaches the operand values its own code produces, so the corpus a second
-implementation should be tested against is the union. Two cases with the same instruction word and the
-same inputs teach nothing new, so they collapse; a case whose inputs differ is kept even if the result
-matches, since that is a distinct piece of evidence about the semantics.
-"""
+"""Merge per-scene instruction vectors into one corpus, deduplicated on the operands."""
 import argparse
 import collections
 import json
 import pathlib
+
+
+def operand_key(case):
+    return (case["code"], case["rsVal"], case["rtVal"], case.get("fsVal", ""),
+            case.get("ftVal", ""), case.get("memBefore", ""),
+            case.get("in", {}).get("hi", ""), case.get("in", {}).get("lo", ""))
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -17,7 +18,7 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--cap", type=int, default=256, help="max cases kept per mnemonic")
     ap.add_argument("--file", default="insn_vectors.jsonl",
-                    help="which per-scene vector file to merge (insn_vectors.jsonl or iop_vectors.jsonl)")
+                    help="insn_vectors.jsonl or iop_vectors.jsonl")
     args = ap.parse_args()
 
     byForm = collections.defaultdict(list)
@@ -35,10 +36,7 @@ def main():
             read += 1
             form = case["mnemonic"]
             scenes[form].add(slug)
-            # IOP records carry no FPU or VU operands, so key on whatever the record actually has.
-            key = (case["code"], case["rsVal"], case["rtVal"], case.get("fsVal", ""),
-                   case.get("ftVal", ""), case.get("memBefore", ""),
-                   case.get("in", {}).get("hi", ""), case.get("in", {}).get("lo", ""))
+            key = operand_key(case)
             if key in seen[form] or len(byForm[form]) >= args.cap:
                 continue
             seen[form].add(key)
@@ -61,6 +59,7 @@ def main():
             delta = sum(1 for c in cases if c["deltas"])
             f.write(json.dumps([form, len(cases), len(scenes[form]), mem, delta]) + "\n")
     print(f"{len(byForm)} forms, {total} vectors kept of {read} read, into {out}")
+
 
 if __name__ == "__main__":
     main()

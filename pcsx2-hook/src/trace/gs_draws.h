@@ -39,7 +39,6 @@ public:
     void close();
     size_t writeLastFrame(std::FILE* out);
     void setDeferred(bool on);
-    std::string getCompletedRows();
     void enableCapture(int skip);
     void markCaptureStart();
     bool takeCapture(std::vector<uint32_t>& pixels, uint32_t& w, uint32_t& h, uint32_t& frame);

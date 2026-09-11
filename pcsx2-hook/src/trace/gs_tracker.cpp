@@ -50,9 +50,7 @@ void GsTracker::onKick(uint32_t chan, uint32_t eepc, uint32_t madr, uint32_t qwc
 }
 
 void GsTracker::init() {
-    if (Config::get().getValue(
-            "PCSX2HOOK_NO_GSCOV"))  // on by default; opt out for parallel/CI runs
-    {
+    if (Config::get().getValue("PCSX2HOOK_NO_GSCOV")) {
         return;
     }
     mEnabled = true;

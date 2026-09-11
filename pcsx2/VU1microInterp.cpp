@@ -39,7 +39,6 @@ static void _vu1Exec(VURegs* VU)
 	u32* ptr;
 
 #ifdef PCSX2HOOK
-	// this instruction's own index, read before TPC advances past it below.
 	const u32 hookStepAddr = (VU->VI[REG_TPC].UL & 0x3fff) >> 3;
 #endif
 	ptr = (u32*)&VU->Micro[VU->VI[REG_TPC].UL];
@@ -177,9 +176,6 @@ static void _vu1Exec(VURegs* VU)
 	_vuAddLowerStalls(VU, &lregs);
 
 #ifdef PCSX2HOOK
-	// full register file right after this step, before the branch delay countdown below
-	// consumes VU->branch. A conditional branch that evaluates false never sets it, so this doubles as
-	// "was this step a taken branch or jump" with no per-opcode detection.
 	if (Hooks::HasVu1StepSink())
 	{
 		Hooks::Vu1Step hookStep{};

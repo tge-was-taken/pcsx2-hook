@@ -65,7 +65,6 @@ private:
         uint64_t stride = 1;
     };
 
-    void hashMix(uint64_t& h, uint64_t v);
     void emitRun();
     bool isReadable(uint32_t addr);
     uint32_t snapshotWindow(uint32_t addr, uint8_t* out);
@@ -73,6 +72,7 @@ private:
 
     std::unordered_map<uint32_t, FnState> mPerFn;
     uint8_t mArgBuf[kMaxDepth][kGprArgs][kArgMax];
+    std::string mPath;
     FILE* mFile = nullptr;
     FILE* mSeqFile = nullptr;
     std::unique_ptr<JsonTable> mSeq;
@@ -87,7 +87,6 @@ private:
     uint64_t mCalls = 0, mTruncated = 0;
 };
 
-// Hooks::Register takes plain function pointers.
 void apiMemSink(uint32_t addr, uint64_t value, uint32_t size, bool isRead);
 Hooks::Result apiEnterHook(Hooks::Context& ctx);
 void apiExitHook(Hooks::Context& ctx);

@@ -744,9 +744,7 @@ void GSRunner::SettingsOverride() {
 
     s_settings_interface.SetBoolValue("EmuCore/GS", "OsdShowFPS", true);
     s_settings_interface.SetBoolValue("EmuCore/GS", "OsdShowResolution", true);
-    s_settings_interface.SetBoolValue(
-        "EmuCore/GS", "OsdShowGSStats",
-        true);  // Memory card: enable slot 1 for persistent saves (PCSX2 creates/formats the file
+    s_settings_interface.SetBoolValue("EmuCore/GS", "OsdShowGSStats", true);
     if (pcsx2hook::Config::get().getValue("PCSX2HOOK_NOMEMCARD")) {
         for (u32 i = 0; i < 2; i++) {
             s_settings_interface.SetBoolValue("MemoryCards",

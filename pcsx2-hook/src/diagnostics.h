@@ -21,8 +21,6 @@
 
 namespace pcsx2hook {
 
-// The emulator's sinks are plain function pointers, so the tracers need one reachable owner rather
-// than an instance threaded through a C boundary.
 class Diagnostics {
 public:
     static Diagnostics& get();

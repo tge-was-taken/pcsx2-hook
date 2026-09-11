@@ -64,8 +64,6 @@ void postThunk(Hooks::Context& ctx) {
     it->second.post(&view, it->second.user);
 }
 
-// One variable per trace, so enabling through the API and enabling through the environment reach the
-// same switch rather than two that can disagree.
 const char* traceVariable(pcsx2hook_trace which) {
     switch (which) {
         case PCSX2HOOK_TRACE_EXEC: return "PCSX2HOOK_EXEC_TRACE";
@@ -87,7 +85,6 @@ const char* traceVariable(pcsx2hook_trace which) {
 
 }  // namespace
 
-// Forwards the run loop's extension points to the host's C callbacks.
 struct pcsx2hook_ctx {
     class HostCore : public Core {
     public:
@@ -335,8 +332,6 @@ void pcsx2hook_run_on_gs_thread(pcsx2hook_ctx* ctx, pcsx2hook_void_fn fn, void* 
     MTGS::WaitGS(false, false, false);
 }
 
-// Asking for the size takes the snapshot and keeps it, so the fetch that follows returns that same
-// frame rather than a second one taken a moment later.
 size_t pcsx2hook_read_framebuffer(pcsx2hook_ctx* ctx, void* out, size_t size, uint32_t* width,
                                   uint32_t* height) {
     if (!ctx) return 0;

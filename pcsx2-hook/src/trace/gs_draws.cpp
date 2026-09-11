@@ -229,13 +229,15 @@ void GsDraws::onDraw(const Hooks::GsDraw& d) {
     }
 }
 void GsDraws::init() {
-    const char* path = Config::get().getValue("PCSX2HOOK_GS_TRACE");
-    if (path) {
-        mOut = std::fopen(path, "w");
+    if (const char* env = Config::get().getValue("PCSX2HOOK_GS_TRACE")) {
+        const std::string path = (!*env || std::strcmp(env, "1") == 0)
+                                     ? Diagnostics::get().getDumps().getPath("gs_trace.jsonl")
+                                     : std::string(env);
+        mOut = std::fopen(path.c_str(), "w");
         if (!mOut) {
-            std::fprintf(stderr, "[gsdraw] cannot open %s\n", path);
+            std::fprintf(stderr, "[gsdraw] cannot open %s\n", path.c_str());
         } else {
-            std::fprintf(stderr, "[gsdraw] GS draw trace -> %s\n", path);
+            std::fprintf(stderr, "[gsdraw] GS draw trace -> %s\n", path.c_str());
         }
     }
     if (const char* range = Config::get().getValue("PCSX2HOOK_GS_DUMP")) {
@@ -252,12 +254,9 @@ void GsDraws::init() {
     Hooks::SetGsDrawSink(&gsDrawSink);
     Hooks::SetGsVSyncSink(&gsVSyncSink);
     DrawTrace& draws = Diagnostics::get().getDraws();
-    // The sinks outlive this scope, so each takes its own reference rather than capturing one.
     if (draws.isVuTraceEnabled() || draws.isVuWatchEnabled() || draws.isVuExecTraceEnabled()) {
         Hooks::SetVu1UploadSink([](u32 addr, const u32* words, u32 count) {
-            GsDraws& gs = Diagnostics::get().getGsDraws();
-            Diagnostics::get().getDraws().onVu1Upload(addr, words, count,
-                                                      {gs.getFrame(), uint32_t(gs.getBatch())});
+            Diagnostics::get().getDraws().onVu1Upload(addr, words, count);
         });
         Hooks::SetVu1ExecSink([](u32 pc, const u8* vuMem, u32 vuMemSize) {
             DrawTrace& d = Diagnostics::get().getDraws();
@@ -367,23 +366,6 @@ std::string GsDraws::getRowsForFrame(uint32_t frame) {
         }
     }
     return out;
-}
-std::string GsDraws::getCompletedRows() {
-    const std::lock_guard<std::mutex> lock(mMutex);
-    if (mKept.size() < 2) {
-        return {};
-    }
-    for (auto it = mKept.rbegin() + 1; it != mKept.rend(); ++it) {
-        if (it->rows.empty()) {
-            continue;
-        }
-        std::string out;
-        for (const std::string& row : it->rows) {
-            out += row;
-        }
-        return out;
-    }
-    return {};
 }
 size_t GsDraws::writeLastFrame(std::FILE* out) {
     const std::lock_guard<std::mutex> lock(mMutex);

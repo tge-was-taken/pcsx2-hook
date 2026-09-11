@@ -227,7 +227,7 @@ static __fi void execI()
 	}
 
 #ifdef PCSX2HOOK
-	const u32 hookPc = psxRegs.pc; // captured before the increment below
+	const u32 hookPc = psxRegs.pc;
 #endif
 	psxRegs.code = iopMemRead32(psxRegs.pc);
 
@@ -236,8 +236,6 @@ static __fi void execI()
 	psxRegs.pc+= 4;
 	psxRegs.cycle++;
 #ifdef PCSX2HOOK
-
-	// bracket the instruction so a sink can diff the register file either side of it.
 	if (Hooks::HasIopInsnSink())
 	{
 		const u32 hookCode = psxRegs.code;

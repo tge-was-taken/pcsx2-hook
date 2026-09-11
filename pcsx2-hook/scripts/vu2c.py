@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Translate the VU1 microprograms in a PCSX2HOOK_VU_TRACE dump into pseudo-C.
-
-Instructions are decoded from the raw words, not from the disassembly text in the dump. The tables
-mirror PCSX2's (DisVUmicro.h, VUops.cpp) and every operation follows its VU interpreter.
-"""
+"""Translate the VU1 microprograms in a PCSX2HOOK_VU_TRACE dump into pseudo-C."""
 
 USAGE = """usage: vu2c.py <vu1_programs.jsonl> [options]
   --list            one line per program, no code
@@ -28,11 +24,10 @@ import re
 import struct
 import sys
 
-VERSION = "1.0"  # bump when the emitted form changes
+VERSION = "1.0"
 
 FIELDS = "xyzw"
 
-# code & 0x3f, entries 0x3c-0x3f redirect to UPPER_FD[op & 3][(code >> 6) & 0x1f].
 UPPER_MAIN = [
     "ADDx", "ADDy", "ADDz", "ADDw", "SUBx", "SUBy", "SUBz", "SUBw",
     "MADDx", "MADDy", "MADDz", "MADDw", "MSUBx", "MSUBy", "MSUBz", "MSUBw",
@@ -53,7 +48,6 @@ UPPER_FD = [
      6: "MULAw", 7: "CLIP", 8: "MADDAi", 9: "MSUBAi", 11: "NOP"},
 ]
 
-# code >> 25, entry 0x40 redirects to LOWER_SPECIAL / LOWER_T3.
 LOWER_MAIN = {
     0x00: "LQ", 0x01: "SQ", 0x04: "ILW", 0x05: "ISW", 0x08: "IADDIU", 0x09: "ISUBIU",
     0x10: "FCEQ", 0x11: "FCSET", 0x12: "FCAND", 0x13: "FCOR",
@@ -75,14 +69,14 @@ LOWER_T3 = [
     {13: "SQD", 14: "WAITQ", 15: "ISWR", 16: "RXOR", 28: "ERLENG", 30: "WAITP"},
 ]
 
-# Lower ops whose mnemonic carries the field bits, and the names PCSX2's disassembler misspells.
 DOTTED_LOWER = {"MOVE", "MFIR", "MTIR", "MR32", "LQ", "LQD", "LQI", "SQ", "SQD", "SQI",
                 "ILW", "ISW", "ILWR", "ISWR", "RINIT", "RGET", "RNEXT", "RXOR", "MFP", "NOP"}
-DIS_ALIAS = {"SUBAx": "SUBx", "SUBAy": "SUBy", "SUBAz": "SUBz", "SUBAw": "SUBw", "IBGEZ": "IBEZ"}
+PCSX2_MISSPELLINGS = {"SUBAx": "SUBx", "SUBAy": "SUBy", "SUBAz": "SUBz", "SUBAw": "SUBw",
+                      "IBGEZ": "IBEZ"}
 
-# VU1 micro memory is 16 KB, so a branch target wraps at 2048 instructions (PCSX2 masks the byte
-# address with 0x3fff).
-MICRO_MASK = 0x7FF
+MICRO_MEM_BYTES = 16 * 1024
+MICRO_MASK = MICRO_MEM_BYTES // 8 - 1
+CONSTANT_REGS = {"vf00", "vi00"}
 
 ARITH = re.compile(r"(ADD|SUB|MUL|MADD|MSUB|MAX|MINI)(A?)([xyzwiq]?)$")
 ARITH_EXPR = {"ADD": "{a} + {b}", "SUB": "{a} - {b}", "MUL": "{a} * {b}",
@@ -215,12 +209,11 @@ def decode_lower(code):
     return name
 
 
-def mnemonic(name, f, upper, dis=False):
-    """The instruction's name; dis spells it as PCSX2 does, for cross-checking against the dump."""
+def mnemonic(name, f, upper, pcsx2_spelling=False):
     if not name:
         return "?"
-    if dis:
-        name = DIS_ALIAS.get(name, name)
+    if pcsx2_spelling:
+        name = PCSX2_MISSPELLINGS.get(name, name)
     dotted = name != "NOP" if upper else name in DOTTED_LOWER
     return "%s.%s" % (name, f.mask) if dotted else name
 
@@ -234,7 +227,6 @@ def addr_expr(reg, imm=0):
 
 
 def vf00_const(operand):
-    """The constant an operand names when it is lanes of vf00, which reads as (0, 0, 0, 1)."""
     if not operand.startswith("vf00."):
         return None
     values = {1.0 if c == "w" else 0.0 for c in operand.split(".", 1)[1]}
@@ -242,7 +234,6 @@ def vf00_const(operand):
 
 
 def fold_term(a, b):
-    """`a * b` with vf00's lanes folded out, or None when the product is zero."""
     ca, cb = vf00_const(a), vf00_const(b)
     if ca == 0.0 or cb == 0.0:
         return None
@@ -254,7 +245,6 @@ def fold_term(a, b):
 
 
 def fold_arith(base, a, b, acc):
-    """The expression with vf00 folded out, or None to keep it as written."""
     ca, cb = vf00_const(a), vf00_const(b)
     product = "%s * %s" % (a, b)
     if base in ("ADD", "SUB"):
@@ -283,7 +273,6 @@ READ_OPERAND = re.compile(r"(vf\d\d)\.([xyzw]+)")
 
 
 def subst_reads(text, known):
-    """Replace register reads whose lanes are all known with the value they hold."""
     if " = " not in text:
         return text
     lhs, rhs = text.split(" = ", 1)
@@ -293,7 +282,6 @@ def subst_reads(text, known):
         if not all(c in lanes for c in m.group(2)):
             return m.group(0)
         text = lanes_literal([lanes.get(c, 0) for c in FIELDS], m.group(2))
-        # A negative literal can land after a unary minus or another operator.
         return "(%s)" % text if text.startswith("-") else text
 
     return lhs + " = " + READ_OPERAND.sub(swap, rhs)
@@ -344,23 +332,17 @@ def render_upper(name, f, clean=False):
     return [], set(), set()
 
 
-# A lane outside this range is a packed field rather than a number: VU geometry does not compute
-# with magnitudes this small or this large.
-FLOAT_RANGE = (1e-8, 1e10)
+PLAUSIBLE_FLOAT_RANGE = (1e-8, 1e10)
 
 
 def fnum(bits):
-    """A float32 word as a C literal, or its bit pattern when the lane is not holding a number.
-
-    A denormal cannot be one: the VU flushes denormals to zero, so no arithmetic reads it. Nor can
-    an infinity, a NaN, or a magnitude outside FLOAT_RANGE. Those print through as_float, which is
-    the same bit copy MFIR does.
-    """
+    """A float32 as a C literal, or as_float(bits) when the lane holds packed bits, not a number."""
     value = struct.unpack("<f", struct.pack("<I", bits))[0]
     exponent, magnitude = bits & 0x7F800000, abs(value)
+    lo, hi = PLAUSIBLE_FLOAT_RANGE
     if not exponent and bits & 0x007FFFFF:
         return "as_float(%d)" % (bits & 0x007FFFFF)
-    if exponent == 0x7F800000 or (magnitude and not FLOAT_RANGE[0] <= magnitude < FLOAT_RANGE[1]):
+    if exponent == 0x7F800000 or (magnitude and not lo <= magnitude < hi):
         return "as_float(0x%08X)" % bits
     text = "%.9g" % value
     return text + ("f" if "." in text or "e" in text else ".0f")
@@ -371,14 +353,12 @@ GIF_REGS = ["PRIM", "RGBAQ", "ST", "UV", "XYZF2", "XYZ2", "TEX0_1", "TEX0_2",
 GIF_FLG = ["PACKED", "REGLIST", "IMAGE", "DISABLE"]
 GIF_PRIM = ["POINT", "LINE", "LINESTRIP", "TRI", "TRISTRIP", "TRIFAN", "SPRITE", "?"]
 GIF_PRIM_BITS = ["IIP", "TME", "FGE", "ABE", "AA1", "FST", "CTXT", "FIX"]
+GIF_REG_PRIM = 0x00
+GIF_REG_INVALID = 0x0B
+GIF_FLG_IMAGE = 2
 
 
 def gif_tag(words):
-    """The GIF tag a quadword holds, or None when the bits cannot be one.
-
-    Both pad fields have to be zero and every named register has to be a real one, which is 30 bits
-    of structure; a quadword of geometry does not pass by accident.
-    """
     w0, w1, w2, w3 = words
     if w0 >> 16 or w1 & 0x3FFF:
         return None
@@ -386,8 +366,8 @@ def gif_tag(words):
     pre, prim, flg, nreg = (w1 >> 14) & 1, (w1 >> 15) & 0x7FF, (w1 >> 26) & 3, (w1 >> 28) & 15
     regs = [(w2 >> (4 * i)) & 15 for i in range(8)] + [(w3 >> (4 * i)) & 15 for i in range(8)]
     used = regs[:nreg or 16]
-    # A packet writes PRIM at most once, so a repeat means the quadword is a counter, not a tag.
-    if not nloop or 0x0B in used or (flg != 2 and used.count(0x00) > 1):
+    repeats_prim = flg != GIF_FLG_IMAGE and used.count(GIF_REG_PRIM) > 1
+    if not nloop or GIF_REG_INVALID in used or repeats_prim:
         return None
     out = ["GIFtag NLOOP=%d" % nloop]
     if eop:
@@ -396,7 +376,7 @@ def gif_tag(words):
         flags = [n for i, n in enumerate(GIF_PRIM_BITS) if prim >> (i + 3) & 1]
         out.append("PRIM=%s" % "|".join([GIF_PRIM[prim & 7]] + flags))
     out.append("FLG=%s" % GIF_FLG[flg])
-    if flg != 2:
+    if flg != GIF_FLG_IMAGE:
         out.append("NREG=%d REGS=%s" % (nreg or 16, ",".join(GIF_REGS[r] for r in used)))
     return " ".join(out)
 
@@ -615,12 +595,10 @@ class Ins:
         if self.ibit:
             return reads, writes | {"I"}
         lr, lw = branch_regs(self) if self.branch else render_lower(self.lname, self.lf)[1:]
-        # vf00 and vi00 are constants: naming one as a destination discards the result.
-        return reads | set(lr), (writes | set(lw)) - {"vf00", "vi00"}
+        return reads | set(lr), (writes | set(lw)) - CONSTANT_REGS
 
 
 def branch_regs(ins):
-    """(reads, writes) for a control-flow lower half."""
     f, name = ins.lf, ins.lname
     if name in BRANCH_COND:
         return {vi(f.is_), vi(f.it)}, set()
@@ -646,7 +624,6 @@ def branch_parts(ins, negate=False):
 
 
 def pair_statements(ins, opts, upper=None):
-    """The pair's statements in an order that keeps the read-before-write semantics."""
     ustmts, ureads, uwrites = render_upper(ins.uname, ins.uf, opts["clean"])
     if upper is not None:
         ustmts = [upper] if upper else []
@@ -659,13 +636,13 @@ def pair_statements(ins, opts, upper=None):
         lstmts, lreads, lwrites = render_lower(ins.lname, ins.lf, opts.get("consts"))
     notes = []
     uwrites, lwrites = uwrites - {"vf00"}, lwrites - {"vf00"}
-    swap = bool(uwrites & lreads)
-    if swap and (lwrites & ureads):
+    lower_first = bool(uwrites & lreads)
+    if lower_first and (lwrites & ureads):
         notes.append("both halves overwrite what the other reads")
     elif uwrites & lwrites:
         notes.append("both halves write %s" % ", ".join(sorted(uwrites & lwrites)))
     out = []
-    if swap:
+    if lower_first:
         out += [(s, mnemonic(ins.lname, ins.lf, False)) for s in lstmts]
         out += [(s, mnemonic(ins.uname, ins.uf, True)) for s in ustmts]
     else:
@@ -681,7 +658,6 @@ def plural(count, word):
 
 
 def dead_ranges(code, ran):
-    """{first address: last address} for each run of instructions the trace never reached."""
     ranges, start = {}, None
     for ins in code + [None]:
         if ins is not None and not ran["count"].get(ins.addr):
@@ -701,7 +677,6 @@ def label_line(addr, sources):
 
 
 def emit_line(ins, text, mnem, indent, opts, head=True, note=None):
-    """One output line: `/* addr upper lower mnemonic */ statement // note`."""
     if not opts["addr"]:
         prefix = ""
     elif not opts["asm"]:
@@ -718,7 +693,6 @@ def emit_line(ins, text, mnem, indent, opts, head=True, note=None):
 
 
 def chain_expr(chain, labels):
-    """One expression for a run of ACC writes ending in a vf write, or None if that would lie."""
     mask = chain[0].uf.mask
     if any(c.uf.mask != mask for c in chain) or any(c.addr in labels for c in chain[1:]):
         return None
@@ -729,7 +703,8 @@ def chain_expr(chain, labels):
         reads |= render_upper(c.uname, c.uf)[1]
         writes |= render_lower(c.lname, c.lf)[2]
     dst = vf(chain[-1].uf.fd)
-    if (reads | {dst}) & writes:  # an interleaved lower half moves one of the inputs
+    lower_moves_an_input = (reads | {dst}) & writes
+    if lower_moves_an_input:
         return None
     parts = []
     for n, c in enumerate(chain):
@@ -784,12 +759,10 @@ def flow_ranges(code, here, targets):
             continue
         t, b = ins.target, ins.addr
         if t <= b:
-            # The loop body runs from the branch target through the delay slot, entered by falling in.
             if targets.count(t) == 1 and not (labels & set(range(t + 1, b + 2))) \
                     and t - 1 not in branches:
                 cands.append((t, b + 1, "do", b))
         elif t > b + 2:
-            # The instructions the branch skips over become the body of an if.
             if not (labels & set(range(b + 2, t))) and b + 1 not in branches \
                     and t - 1 not in branches and b + 1 not in labels:
                 cands.append((b + 2, t - 1, "if", b))
@@ -798,8 +771,10 @@ def flow_ranges(code, here, targets):
     for r in cands:
         while stack and stack[-1][1] < r[0]:
             stack.pop()
-        if stack and (r[1] > stack[-1][1] or (r[1] == stack[-1][1] and stack[-1][2] == "do")):
-            continue  # it crosses the block it starts inside, so neither shape holds
+        crosses_enclosing = stack and (r[1] > stack[-1][1]
+                                       or (r[1] == stack[-1][1] and stack[-1][2] == "do"))
+        if crosses_enclosing:
+            continue
         stack.append(r)
         kept.append(r)
 
@@ -811,7 +786,8 @@ def flow_ranges(code, here, targets):
         inside = [r for r in loops if r[0] <= ins.addr < r[3]]
         if inside:
             loop = max(inside, key=lambda r: r[0])
-            if ins.target == loop[1] + 1:  # the branch lands just past the loop
+            loop_end = loop[1]
+            if ins.target == loop_end + 1:
                 breaks[ins.addr] = loop
     return [r for r in kept if not (r[2] == "if" and r[3] in breaks)], breaks
 
@@ -830,12 +806,7 @@ def elsewhere(addr, prog, others):
 
 
 def dispatch_table(code, base):
-    """{jump address: (register, candidate targets, where they are set, table reads)}.
-
-    A dynamic jump reads a register, so the candidates are every constant the program ever puts in
-    that register which is also an address inside it. That over-approximates, which is why the
-    listing calls them candidates.
-    """
+    """{jump address: (register, candidate targets, where they are set, table reads)}."""
     found = {}
     for ins in code:
         if ins.lname not in ("JR", "JALR"):
@@ -857,14 +828,11 @@ def dispatch_table(code, base):
 
 def translate(prog, others, opts):
     code = [Ins(prog["base"] + i, u, l) for i, (u, l, _) in enumerate(prog["ins"])]
-    # A quadword the program stores to is not the one the sample recorded.
     stored = {}
     for ins in code:
         if ins.ibit:
             continue
-        if ins.lname == "SQ" and ins.lf.it == 0:
-            stored.setdefault(ins.lf.imm11, set()).update(ins.lf.mask)
-        elif ins.lname == "ISW" and ins.lf.is_ == 0:
+        if (ins.lname == "SQ" and ins.lf.it == 0) or (ins.lname == "ISW" and ins.lf.is_ == 0):
             stored.setdefault(ins.lf.imm11, set()).update(ins.lf.mask)
     consts = {addr: (lanes, distinct, stored.get(addr, set()))
               for addr, (lanes, distinct) in
@@ -877,28 +845,28 @@ def translate(prog, others, opts):
     ran = lookup_runs(prog, opts["runs"]) if opts["runs"] else None
     slicing = bool(ran and opts["only_ran"])
     if slicing:
-        # A block with both ends unexecuted goes whole, so its braces cannot come apart.
         ranges = [r for r in ranges if ran["count"].get(r[0]) or ran["count"].get(r[3])]
         breaks = {a: r for a, r in breaks.items() if ran["count"].get(a)}
     shaped = {r[3]: r for r in ranges}
     opens, closes = {}, {}
-    for r in ranges:  # nested blocks can share an address, so count them
-        side = opens if r[2] == "do" else closes
-        side[r[0] if r[2] == "do" else r[1]] = side.get(r[0] if r[2] == "do" else r[1], 0) + 1
-    def jumps(ins):
-        """Whether this branch still prints a goto, so its target still needs a label."""
+    for r in ranges:
+        if r[2] == "do":
+            opens[r[0]] = opens.get(r[0], 0) + 1
+        else:
+            closes[r[1]] = closes.get(r[1], 0) + 1
+
+    def prints_goto(ins):
         return (ins.target in here and ins.addr not in shaped and ins.addr not in breaks
                 and not (slicing and not ran["count"].get(ins.addr)))
 
-    labels = {ins.target for ins in code if jumps(ins)}
+    labels = {ins.target for ins in code if prints_goto(ins)}
     incoming = {}
     for ins in code:
-        if jumps(ins) and ins.target in labels:
+        if prints_goto(ins) and ins.target in labels:
             incoming.setdefault(ins.target, []).append(ins.addr)
     folds, dropped = acc_chains(code, labels) if opts["clean"] else ({}, set())
 
-    def inlined(ins, nxt):
-        """The branch condition, when the delay slot cannot change it before the branch takes."""
+    def can_inline_condition(ins, nxt):
         if not opts["clean"] or ins.lname not in BRANCH_COND:
             return False
         if nxt is not None and nxt.addr in labels:
@@ -910,7 +878,7 @@ def translate(prog, others, opts):
     for ins in code:
         r, w = ins.reads_writes()
         for reg in sorted(r):
-            if reg not in written and reg not in reads_first and reg not in ("vf00", "vi00"):
+            if reg not in written and reg not in reads_first and reg not in CONSTANT_REGS:
                 reads_first.append(reg)
         written |= w
     out = ["/* %s: micro 0x%04X..0x%04X, %d instructions, uploaded to 0x%04x %d times */"
@@ -929,7 +897,7 @@ def translate(prog, others, opts):
                               for a, n in sorted(ran["entries"].items()))))
     dispatch = dispatch_table(code, prog["base"])
     reached = {}
-    for at, (reg, targets, _, _) in dispatch.items():
+    for at, (_, targets, _, _) in dispatch.items():
         for t in targets:
             reached.setdefault(t, []).append(at)
     for at, (reg, targets, written, reads) in sorted(dispatch.items()):
@@ -979,12 +947,11 @@ def translate(prog, others, opts):
 
     known, entries = {}, set(targets)
 
-    def enters(at):
-        """Values do not survive a point control can jump to."""
+    def forget_known_at_entry(at):
         if at.addr in entries:
             known.clear()
 
-    def leaves(at):
+    def track_known(at):
         for reg in at.reads_writes()[1]:
             known.pop(reg, None)
         if at.lname == "LQ" and at.lf.is_ == 0 and at.lf.ft and at.lf.imm11 in consts \
@@ -1007,7 +974,6 @@ def translate(prog, others, opts):
         return False
 
     def elide(at):
-        """Never-executed straight-line code can go; anything structural has to stay."""
         if not slicing or ran["count"].get(at.addr):
             return False
         return not (at.ebit or at.addr in labels or at.addr in opens
@@ -1038,9 +1004,9 @@ def translate(prog, others, opts):
                                        ("" if ins.addr in dropped else None))
         if elide(ins):
             stmts, notes = [], []
-        enters(ins)
+        forget_known_at_entry(ins)
         stmts = [(subst_reads(t, known) if consts else t, m) for t, m in stmts]
-        leaves(ins)
+        track_known(ins)
         first = True
         for note in notes:
             first = put(ins, "/* %s */" % note, None, 2, first)
@@ -1050,15 +1016,14 @@ def translate(prog, others, opts):
                         if fold and text == fold[1] else None)
         last = ins.addr
         if ins.branch and elide(ins):
-            # Its delay slot goes with it, unless something still jumps to that address.
             if i + 1 < len(code) and elide(code[i + 1]):
                 i += 1
                 last = code[i].addr
         elif ins.branch:
             nxt = code[i + 1] if i + 1 < len(code) else None
-            inline = inlined(ins, nxt)
+            inline = can_inline_condition(ins, nxt)
             cond, link, target = branch_parts(ins)
-            entered = nxt is not None and nxt.addr in labels
+            delay_slot_is_target = nxt is not None and nxt.addr in labels
             note = None
             if ins.target is not None and ins.target not in here:
                 target = "goto_micro(0x%04X);" % ins.target
@@ -1071,15 +1036,14 @@ def translate(prog, others, opts):
                             mnemonic(ins.lname, ins.lf, False), 2, first)
             if cond and target is not None:
                 test = cond if inline else "take"
-                # Clearing take keeps the test right for a delay slot the code also jumps into.
-                target = ("if (take) { take = false; %s }" % target if entered
+                target = ("if (take) { take = false; %s }" % target if delay_slot_is_target
                           else "if (%s) %s" % (test, target))
             if link:
                 first = put(ins, link, mnemonic(ins.lname, ins.lf, False), 2, first, "link register")
             if nxt is not None:
                 if nxt.branch:
                     put(nxt, "/* branch in delay slot: this one is taken first */", None, 2, False)
-                if entered:
+                if delay_slot_is_target:
                     out.append("L_%04X:  /* delay slot of %04X, reached with take clear */"
                                % (nxt.addr, ins.addr))
                 dfold = folds.get(nxt.addr)
@@ -1087,9 +1051,9 @@ def translate(prog, others, opts):
                                                  ("" if nxt.addr in dropped else None))
                 if elide(nxt):
                     dstmts, dnotes = [], []
-                enters(nxt)
+                forget_known_at_entry(nxt)
                 dstmts = [(subst_reads(t, known) if consts else t, m) for t, m in dstmts]
-                leaves(nxt)
+                track_known(nxt)
                 dfirst = True
                 for note in dnotes:
                     dfirst = put(nxt, "/* %s */" % note, None, 2, dfirst)
@@ -1105,7 +1069,8 @@ def translate(prog, others, opts):
                     put(nxt, "}", None, 2, False)
             mnem = mnemonic(ins.lname, ins.lf, False)
             if shape is None and ins.addr in breaks:
-                put(ins, target if not entered else "{ take = false; break; }", mnem, 2, first)
+                put(ins, "{ take = false; break; }" if delay_slot_is_target else target,
+                    mnem, 2, first)
             elif shape and shape[2] == "do":
                 depth[0] -= 1
                 put(ins, "} while (%s);" % (cond if inline else "take"), mnem, 2, first)
@@ -1154,7 +1119,6 @@ def option_notes(opts):
 
 
 def write_split(outdir, path, picked, others, opts, argv):
-    """One file per program, sharing one header, with an index listing them."""
     os.makedirs(outdir, exist_ok=True)
     with open(os.path.join(outdir, "vu1_defs.h"), "w") as f:
         f.write("#ifndef VU1_DEFS_H\n#define VU1_DEFS_H\n\n")
@@ -1218,6 +1182,10 @@ def watch_consts(samples, instance):
             for addr, lanes in chosen.items()}
 
 
+def empty_runs():
+    return {"runs": 0, "count": {}, "targets": {}, "taken": {}, "entries": {}, "sequence": []}
+
+
 def lookup_runs(prog, runs):
     """Runs for this program, merging every alias when the block is a resident image."""
     keys = [k for k in [prog["hash"]] + prog.get("aliases", []) if k in runs]
@@ -1225,7 +1193,7 @@ def lookup_runs(prog, runs):
         return None
     if len(keys) == 1:
         return runs[keys[0]]
-    merged = {"runs": 0, "count": {}, "targets": {}, "taken": {}, "entries": {}, "sequence": []}
+    merged = empty_runs()
     for k in keys:
         r = runs[k]
         merged["runs"] += r["runs"]
@@ -1241,21 +1209,12 @@ def lookup_runs(prog, runs):
 
 
 def parse_exec(path):
-    """{program: {"runs", "count", "targets", "taken", "entries"}} from a VU execution trace.
-
-    Format, one run per `run` line and one row per executed address:
-
-        run f12 b7 vu62BCC9E6481451C0 entry=0036
-        0036 1
-        01B3 1 target=0422
-        04A0 120 taken=119
-    """
+    """{program: {"runs", "count", "targets", "taken", "entries", "sequence"}} from an exec trace."""
     runs = {}
     for entry in read_jsonl(path):
         if entry.get("type") != "run":
             continue
-        current = runs.setdefault(entry["vu"], {"runs": 0, "count": {}, "targets": {},
-                                                "taken": {}, "entries": {}, "sequence": []})
+        current = runs.setdefault(entry["vu"], empty_runs())
         current["runs"] += 1
         order = []
         current["sequence"].append({"frame": entry["frame"], "batch": entry["batch"],
@@ -1282,7 +1241,6 @@ TRACE_LIMIT = 4000
 
 
 def render_trace(prog, run, index, opts):
-    """One recorded run, in the order it executed, with the values it wrote."""
     code = {prog["base"] + i: Ins(prog["base"] + i, u, l)
             for i, (u, l, _) in enumerate(prog["ins"])}
     out = ["/* %s: run %d, frame %d batch %d, %s executed */"
@@ -1304,10 +1262,9 @@ def render_trace(prog, run, index, opts):
         last = addr
         stmts, _ = pair_statements(ins, opts)
         if ins.branch:
-            # The trace already holds the outcome, so a goto would say nothing the next line does not.
-            # The recorded target is authoritative; otherwise the step past the delay slot is it.
-            after = jumped[0] if jumped else (run["steps"][step + 2][0]
-                                              if step + 2 < len(run["steps"]) else None)
+            past_delay_slot = step + 2
+            after = jumped[0] if jumped else (run["steps"][past_delay_slot][0]
+                                              if past_delay_slot < len(run["steps"]) else None)
             went = "-> %04X" % after if after is not None else "end of the trace"
             if ins.target is not None and after is not None:
                 went += " (taken)" if after == ins.target else " (not taken)"
@@ -1335,10 +1292,7 @@ def parse_dump(path):
             continue
         addr = int(row.get("addr", "0"), 16) if isinstance(row.get("addr"), str) else 0
         prog = {"hash": row["hash"], "addr": addr, "uploads": row.get("uploads", 0),
-                "base": addr // 8, "ins": [],
-                # An image block carries the entry-program hashes an execution trace keys its runs
-                # by, since the image itself was never a run's program.
-                "aliases": row.get("aliases", [])}
+                "base": addr // 8, "ins": [], "aliases": row.get("aliases", [])}
         for ins in row["code"]:
             lower = ins.get("lowerDis")
             if lower is None and "immediate" in ins:
@@ -1349,8 +1303,7 @@ def parse_dump(path):
     return progs
 
 
-def check(progs):
-    """Diff our decode against the dump's own PCSX2 disassembly."""
+def check_decode(progs):
     regs = re.compile(r"v[fi]\d\d")
     bad = ibit = 0
     total = 0
@@ -1358,7 +1311,7 @@ def check(progs):
         for i, (u, l, text) in enumerate(prog["ins"]):
             ins = Ins(prog["base"] + i, u, l)
             total += 1
-            um = mnemonic(ins.uname, ins.uf, True, dis=True) if ins.uname else None
+            um = mnemonic(ins.uname, ins.uf, True, pcsx2_spelling=True) if ins.uname else None
             if um is None or not text.startswith(um):
                 print("%s %04X: upper %s != %s" % (prog["hash"][:8], ins.addr, um, text))
                 bad += 1
@@ -1373,7 +1326,7 @@ def check(progs):
             if ins.ibit:
                 ibit += 1
                 continue
-            lm = mnemonic(ins.lname or "?", ins.lf, False, dis=True)
+            lm = mnemonic(ins.lname or "?", ins.lf, False, pcsx2_spelling=True)
             sep = text.rfind("  " + lm)
             if sep < len(um):
                 print("%s %04X: lower %s not in %r" % (prog["hash"][:8], ins.addr, lm, text))
@@ -1400,7 +1353,7 @@ def main(argv):
     wanted, do_list, do_check = [], False, False
     opts = {"addr": True, "asm": True, "nops": False, "preamble": True, "flow": False,
             "clean": False, "split": None, "mem": None, "watch": None, "instance": 0,
-            "consts": None, "exec": None, "runs": None, "trace": None, "only_ran": False}
+            "exec": None, "runs": None, "trace": None, "only_ran": False}
     i = 2
     while i < len(argv):
         a = argv[i]
@@ -1456,7 +1409,7 @@ def main(argv):
         print("no programs in %s" % path)
         return 1
     if do_check:
-        return 1 if check(progs) else 0
+        return 1 if check_decode(progs) else 0
     if do_list:
         for p in progs:
             print("%s  0x%04X..0x%04X  %3d instructions  %d uploads"

@@ -1434,7 +1434,6 @@ namespace R3000A
 
 		irxImportLog(libname, index, funcname);
 #ifdef PCSX2HOOK
-		// the IOP's whole external surface, resolved. Both CPU modes reach here.
 		Hooks::OnIrxImport(libname.c_str(), index, funcname);
 #endif
 

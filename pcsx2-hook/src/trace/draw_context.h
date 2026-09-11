@@ -14,8 +14,6 @@
 
 namespace pcsx2hook {
 
-// The label is the host's own word for what it is drawing, since the library has no model of a
-// renderer to name one for it.
 struct DrawContext {
     static constexpr size_t kMaxLabel = 32;
     char label[kMaxLabel] = {};
@@ -87,7 +85,7 @@ public:
     uint64_t resolveProgramAt(uint32_t pc);
     void setRunningProgramGs(uint64_t hash, StreamPos at);
     uint64_t getRunningProgram();
-    void onVu1Upload(uint32_t addr, const uint32_t* words, uint32_t count, StreamPos at);
+    void onVu1Upload(uint32_t addr, const uint32_t* words, uint32_t count);
     void writeVuTrace();
     bool isVuWatchEnabled();
     const std::vector<uint32_t>& getVuWatchAddrs();
@@ -104,7 +102,6 @@ public:
     void onVu1Step(uint32_t addr, const uint32_t vf[32][4], const uint32_t vi[32],
                    const uint32_t acc[4], bool branchTaken, uint32_t branchTarget);
     void writeVuExecTrace();
-    void writeDrawProbe();
 
 private:
     void writeVuImages();

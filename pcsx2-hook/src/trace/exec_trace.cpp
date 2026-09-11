@@ -25,10 +25,6 @@
 #include "symbols.h"
 
 namespace pcsx2hook {
-// A block's counter address is baked into generated code, so the array must never move. One slot
-// per distinct (startpc, endpc): a block recompiled with different bounds is a different extent
-// and gets its own slot rather than polluting the first one's coverage.
-// A kseg0 PC and its physical twin are the same instruction, so coverage counts them once.
 uint32_t ExecTrace::getPhysAddr(uint32_t pc) {
     return pc & kSegMask;
 }
@@ -37,7 +33,6 @@ bool ExecTrace::isInMainRam(uint32_t pc) {
     return getPhysAddr(pc) < kMainRamEnd;
 }
 
-// Addresses baked into generated code, so both arrays are fixed for the run.
 std::string ExecTrace::getOutputDir() {
     const char* env = Config::get().getValue("PCSX2HOOK_EXEC_TRACE");
     if (!env || !*env || std::strcmp(env, "1") == 0) return Diagnostics::get().getDumps().getDir();
@@ -140,8 +135,6 @@ void ExecTrace::enableCalls() {
 
     if (const char* sitesFile = Config::get().getValue("PCSX2HOOK_EXEC_TRACE_SITES")) {
         if (FILE* f = std::fopen(sitesFile, "r")) {
-            // A JSONL table: the header names the columns, then one array per row whose first cell
-            // is the site. Only that cell is needed, so this reads it without a JSON parse.
             char line[512];
             std::fgets(line, sizeof(line), f);
             while (std::fgets(line, sizeof(line), f)) {
@@ -171,8 +164,6 @@ void ExecTrace::enableCalls() {
                      mSyscallSitesEnabled, mFunctionsEnabled);
 }
 
-// One cell holding a list of samples, rather than the variable run of tab-separated cells this used
-// to append past the last named column.
 void ExecTrace::writeSamples(JsonTable& t, const CallSite& site, bool withResult) {
     t.beginCellArray();
     for (const CallSample& s : site.samples) {

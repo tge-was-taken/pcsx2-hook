@@ -2,9 +2,6 @@
 """Walk a capture's per-pass dumps, showing how a region builds up against the reference.
 
 Usage: passdiff.py <capture-base> [x0 y0 x1 y1]
-
-Each pass of a capture writes its target as an RGBA PNG (<base>-passNN.png) and the pass rows
-name the file. A whole-frame mean says a scene is too dark; this says which pass made it so.
 """
 import json
 import os
@@ -14,7 +11,6 @@ import zlib
 
 
 def read_png(path):
-    """Returns (w, h, pixels, channels). Pass dumps are RGBA; the emu reference is RGB."""
     data = open(path, "rb").read()
     pos, idat, ctype = 8, b"", 2
     width = height = 0
@@ -69,6 +65,10 @@ def region_mean(px, w, rect, stride_bytes):
     return [t / max(n, 1) for t in total]
 
 
+def clip_rect(rect, w, h):
+    return (max(0, rect[0]), max(0, rect[1]), min(w, rect[2]), min(h, rect[3]))
+
+
 def main():
     if len(sys.argv) < 2:
         print(__doc__)
@@ -91,20 +91,15 @@ def main():
         if not os.path.exists(path):
             continue
         w, h, px, ch = read_png(path)
-        r = rect or (0, 0, w, h)
-        clipped = (max(0, r[0]), max(0, r[1]), min(w, r[2]), min(h, r[3]))
+        clipped = clip_rect(rect or (0, 0, w, h), w, h)
         m = region_mean(px, w, clipped, ch)
-        # An off-screen target has its own pixel space, so a screen rect means nothing there. Print
-        # the size and mark the row rather than quietly averaging its top-left corner.
         note = " (rect clipped)" if rect and clipped != tuple(rect) else ""
         print(f"{p['pass']:>5} {p['target'][-7:]:>9} {f'{w}x{h}':>9} {str(p['display']):>5} "
               f"{p['draws']:>6}   {m[0]:>7.1f} {m[1]:>7.1f} {m[2]:>7.1f} {m[3]:>7.1f}{note}")
 
     if os.path.exists(ref_path):
         w, h, px, ch = read_png(ref_path)
-        r = rect or (0, 0, w, h)
-        r = (max(0, r[0]), max(0, r[1]), min(w, r[2]), min(h, r[3]))
-        m = region_mean(px, w, r, ch)
+        m = region_mean(px, w, clip_rect(rect or (0, 0, w, h), w, h), ch)
         print(f"{'EMU':>5} {'':>9} {f'{w}x{h}':>9} {'':>5} {'':>6}   "
               f"{m[0]:>7.1f} {m[1]:>7.1f} {m[2]:>7.1f}")
     return 0

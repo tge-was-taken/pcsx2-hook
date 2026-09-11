@@ -157,7 +157,7 @@ __fi void gsWrite32(u32 mem, u32 value)
 {
 	pxAssume( (mem & 3) == 0 );
 #ifdef PCSX2HOOK
-	Hooks::OnHwAccess(false, mem, value, 4, false); // GS privileged registers
+	Hooks::OnHwAccess(false, mem, value, 4, false);
 #endif
 	GIF_LOG("GS write 32 at %8.8lx with data %8.8lx", mem, value);
 

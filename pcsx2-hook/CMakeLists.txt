@@ -1,5 +1,3 @@
-# Built as a shared library so a host loads it rather than compiling it in: the tracers and the hook
-# registry are useful to anything that wants to look at a PS2 program, not only to a port.
 add_library(pcsx2hook SHARED
 	src/api.cpp
 	src/config.cpp
@@ -26,7 +24,6 @@ add_library(pcsx2hook SHARED
 target_include_directories(pcsx2hook
 	PUBLIC include
 	PRIVATE src
-	# The "pcsx2/" and "common/" include prefixes the emulator sources use.
 	PRIVATE ${PROJECT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/pcsx2)
 
 set_target_properties(pcsx2hook PROPERTIES
@@ -47,17 +44,11 @@ target_link_libraries(pcsx2hook_cli PRIVATE pcsx2hook)
 set_target_properties(pcsx2hook_cli PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
 install(TARGETS pcsx2hook_cli RUNTIME DESTINATION bin)
 
-# Compiled as C so the public header is checked for C compatibility, which a C++-only host would
-# never exercise. Covers the contract a caller can reach without booting: null handling, the config
-# copy, and the error string.
 add_executable(pcsx2hook_api_test tests/api_test.c)
 target_link_libraries(pcsx2hook_api_test PRIVATE pcsx2hook)
 set_target_properties(pcsx2hook_api_test PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
 add_test(NAME pcsx2hook_api COMMAND pcsx2hook_api_test)
 
-# A real boot, skipped unless PCSX2HOOK_TEST_BIOS and PCSX2HOOK_TEST_IMAGE point at a BIOS folder and
-# something to boot. Separate from the test above because the library keeps process-global state, so
-# a process drives one context.
 add_test(NAME pcsx2hook_boot COMMAND pcsx2hook_api_test boot)
 add_test(NAME pcsx2hook_destroy_running COMMAND pcsx2hook_api_test destroy)
 add_test(NAME pcsx2hook_run_control COMMAND pcsx2hook_api_test run-control)

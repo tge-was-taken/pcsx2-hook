@@ -50,8 +50,6 @@ void Symbols::load() {
     if (mTried) return;
     mTried = true;
 
-    // A directory rather than a file lets one host carry a map per disc and pick by serial, which
-    // is what a multi-disc run needs; the library has no layout of its own to fall back on.
     std::string path;
     if (const char* env = Config::get().getValue("PCSX2HOOK_SYMBOLS")) {
         std::error_code ec;
@@ -101,9 +99,6 @@ std::string Symbols::resolve(uint32_t pc) const {
                                    [](const auto& a, const auto& b) { return a.first < b.first; });
         if (it != mSyms.begin()) {
             --it;
-            // A linker map lists publics only, so a static function sits in the gap after one and
-            // resolves as "thatPublic+0xNNN" while being a different function entirely. Past this
-            // much, print the raw address too rather than assert a containment we cannot know.
             constexpr uint32_t kTrustSpan = 0x400;
             const uint32_t off = pc - it->first;
             if (off > kTrustSpan)

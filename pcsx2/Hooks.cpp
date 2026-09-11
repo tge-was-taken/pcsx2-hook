@@ -53,12 +53,6 @@ void Hooks::Register(u32 pc, Handler pre, PostHandler post)
 	s_hooks[pc] = {pre, post};
 }
 
-void Hooks::Clear()
-{
-	s_hooks.clear();
-	s_returnStack.clear();
-}
-
 bool Hooks::IsHooked(u32 pc)
 {
 	return !s_hooks.empty() && s_hooks.find(pc) != s_hooks.end();
@@ -467,11 +461,6 @@ void Hooks::SetSifTransferSink(SifTransferSink sink)
 	s_sifTransferSink = sink;
 }
 
-bool Hooks::HasSifTransferSink()
-{
-	return s_sifTransferSink != nullptr;
-}
-
 void Hooks::OnSifTransfer(u32 channel, bool toEE, u32 madr, u32 qwc, const u32* words, u32 count)
 {
 	if (s_sifTransferSink)
@@ -482,12 +471,6 @@ void Hooks::AddGuestMemSink(GuestMemSink sink)
 {
 	if (sink && s_guestMemSinkCount < std::size(s_guestMemSinks))
 		s_guestMemSinks[s_guestMemSinkCount++] = sink;
-}
-
-void Hooks::SetGuestMemSink(GuestMemSink sink)
-{
-	s_guestMemSinkCount = 0;
-	AddGuestMemSink(sink);
 }
 
 bool Hooks::HasGuestMemSink()
@@ -506,11 +489,6 @@ void Hooks::OnGuestMem(u32 addr, u64 value, u32 size, bool isRead)
 void Hooks::SetMemTraceSuppressed(bool on)
 {
 	s_memTraceSuppressed = on;
-}
-
-bool Hooks::MemTraceSuppressed()
-{
-	return s_memTraceSuppressed;
 }
 
 void Hooks::SetHwAccessSink(HwAccessSink sink)

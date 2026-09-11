@@ -150,8 +150,6 @@ __fi void vif1SetupTransfer()
 	g_vif1Cycles += 1; // Add 1 g_vifCycles from the QW read for the tag
 	vif1.inprogress &= ~1;
 #ifdef PCSX2HOOK
-
-	// ground truth for the tag chain a transfer actually follows.
 	Hooks::OnVifTag(vif1ch.tadr, ptag->ID, vif1ch.madr, vif1ch.qwc);
 #endif
 

@@ -89,14 +89,12 @@ std::vector<std::tuple<uint32_t, int, uint32_t>> loadAutopressScript(const std::
 void Core::applyBiosFolders(MemorySettingsInterface& si) {
     const Config& cfg = Config::get();
     if (const char* bios = cfg.getValue("PCSX2HOOK_BIOS")) {
-        // The emulator wants the folder and the file name separately, and resolves a relative
-        // Folders path against its own data root rather than the working directory.
+        // The emulator resolves a relative Folders path against its data root, not the cwd.
         const std::filesystem::path path = std::filesystem::absolute(bios);
         si.SetStringValue("Folders", "Bios", path.parent_path().string().c_str());
         si.SetStringValue("Filenames", "BIOS", path.filename().string().c_str());
     }
     if (const char* patches = cfg.getValue("PCSX2HOOK_PATCHES")) {
-        // Absolute: a relative Folders path resolves against the emulator's data root, not the cwd.
         si.SetStringValue("Folders", "Patches",
                           std::filesystem::absolute(patches).string().c_str());
         si.SetBoolValue("EmuCore", "EnablePatches", true);
@@ -105,8 +103,6 @@ void Core::applyBiosFolders(MemorySettingsInterface& si) {
 
 void Core::applyHeadlessSettings(MemorySettingsInterface& si) {
     const Config& cfg = Config::get();
-    // Software by default: the hardware backends approximate the GS, so only this one is a
-    // reference. Null drops rasterization entirely and fills no frame buffer.
     const bool nullGs = cfg.isSet("PCSX2HOOK_NULLGS");
     si.SetIntValue("EmuCore/GS", "Renderer",
                    static_cast<int>(nullGs                                  ? GSRendererType::Null
@@ -142,8 +138,6 @@ void Core::applyHeadlessSettings(MemorySettingsInterface& si) {
     if (cfg.isSet("PCSX2HOOK_VU0_INTERP")) {
         si.SetBoolValue("EmuCore/CPU/Recompiler", "EnableVU0", false);
     }
-    // VU1 alone keeps the EE recompiler's idle-loop skip, so a savestate boot still reaches its
-    // target frame quickly while hooks that only the interpreter calls back into still fire.
     if (cfg.isSet("PCSX2HOOK_VU1_INTERP")) {
         si.SetBoolValue("EmuCore/CPU/Recompiler", "EnableVU1", false);
     }
@@ -167,8 +161,7 @@ bool Core::configureBoot(VMBootParameters& params) {
     }
     params.source_type = CDVD_SourceType::Iso;
     params.fast_boot = !cfg.isSet("PCSX2HOOK_FULLBOOT");
-    // The engine restores a savestate at the right point, unlike a mid-frame LoadState, which
-    // corrupts the recompiler and TLB.
+    // Restored at boot, since a mid-frame LoadState corrupts the recompiler and TLB.
     if (const char* ls = cfg.getValue("PCSX2HOOK_STATE")) {
         params.save_state = ls;
     }
@@ -201,7 +194,7 @@ bool Core::run(const VMBootParameters& params) {
     diag.getGsTracker().init();
     diag.getTiming().init();
     diag.getExec().enableCalls();
-    diag.getApi().init();  // after the rest, so their hooked addresses are left alone
+    diag.getApi().init();  // last, so the other tracers' hooked addresses are left alone
 
     if (const char* ap = cfg.getValue("PCSX2HOOK_AUTOPRESS")) {
         mAutopress = true;
@@ -214,9 +207,7 @@ bool Core::run(const VMBootParameters& params) {
     mSaveStateFrame = uint32_t(cfg.getInt("PCSX2HOOK_SAVESTATE_FRAME", 0));
     mFrameLimit = uint32_t(cfg.getInt("PCSX2HOOK_FRAMES", 0));
 
-    // The two 'jr $ra; nop' stubs the hook registry returns through: one for a post-handler, one for
-    // a guest call. They go in the kernel-reserved gap below the user ELF base (0x00100000), so they
-    // clobber no program code, and are installed before onVmReady so a hook registered there works.
+    // Return stubs in the kernel gap below the ELF base, installed before onVmReady so its hooks work.
     const uint32_t sentinel =
         uint32_t(cfg.getInt("PCSX2HOOK_SENTINEL_BASE", 0x000FFF00));
     Hooks::SetReturnSentinel(sentinel);
@@ -254,7 +245,6 @@ bool Core::run(const VMBootParameters& params) {
     diag.getDraws().writeVuWatchTrace();
     diag.getDraws().writeVuJrTrace();
     diag.getDraws().writeVuExecTrace();
-    diag.getDraws().writeDrawProbe();
     VMManager::Shutdown(false);
     return true;
 }
@@ -293,14 +283,10 @@ void Core::onFrame() {
         }
     }
 
-    // Written at shutdown, so a run that wants its trace has to reach the end rather than be
-    // killed.
     const bool atLimit = mFrameLimit != 0 && mFrameCount >= mFrameLimit;
     const bool stop = atLimit || mStopRequested.load(std::memory_order_relaxed);
     if (!mStopping && (stop || Diagnostics::get().getExec().finish(mFrameCount))) {
         mStopping = true;
-        // Widens the mined forms with edge operands. Destroys guest state, so it runs at the end of
-        // the session rather than alongside the game.
         Diagnostics::get().getInsn().runSynth();
         VMManager::SetState(VMState::Stopping);
     }

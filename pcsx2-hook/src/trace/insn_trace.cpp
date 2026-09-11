@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: GPL-3.0+
 
 #include "trace/insn_trace.h"
+#include "trace/guest_memory.h"
 #include "trace/json.h"
 #include "trace/table.h"
 
 #include <algorithm>
-#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -18,6 +18,7 @@
 
 #include "DebugTools/Debug.h"
 #include "Memory.h"
+#include "Config.h"
 #include "R5900.h"
 #include "R5900OpcodeTables.h"
 #include "VU.h"
@@ -29,22 +30,6 @@
 #include "symbols.h"
 
 namespace pcsx2hook {
-
-namespace {
-// PSM maps through the emulator's own tables. The length check keeps a read from running off the
-// end of main RAM, which PSM alone does not bound.
-const void* readableHost(uint32_t addr, size_t len) {
-    if ((addr & 0x1FFFFFFFu) + len > Ps2MemSize::MainRam) return nullptr;
-    return PSM(addr);
-}
-}  // namespace
-
-// 32 wide but aligned to 16, so an unaligned store that crosses a 16-byte boundary
-// (swl/swr/sdl/sdr) still lands entirely inside the window. At 16 it did not, which is why swr
-// recorded no result.
-
-// A branch interprets its own delay slot through a nested execI, so the bracket re-enters. One
-// frame per depth keeps the outer instruction's snapshot intact.
 
 std::string InsnTrace::getOutputDir() {
     const char* env = Config::get().getValue("PCSX2HOOK_INSN_TRACE");
@@ -109,16 +94,12 @@ void InsnTrace::snapshot(Snapshot& s) {
     s.p = vu.p.UL;
 }
 
-// What the effective address actually reaches. Classified on the raw address, before any masking:
-//  folds everything into the 32 MB window, so an uncached-mirror MMIO access like
-// 0xB000F000 (INTC_STAT) would otherwise record the RAM shadow at 0xF000 as if it were the value
-// the instruction saw. Only "ram" gets a recorded window; the rest say where they went instead.
+// Classified before masking, which would fold an uncached MMIO mirror onto its RAM shadow.
 const char* InsnTrace::getAddressRegion(uint32_t raw) {
     if (raw >= 0x70000000 && raw < 0x70004000)
-        return "spr";  // scratchpad is not a RAM mirror, it is its own store
+        return "spr";
     if (raw >= 0xC0000000)
-        return "tlb";  // kseg2/3 goes through the TLB, so the mapping is not knowable from the
-                       // address
+        return "tlb";
     const uint32_t phys = raw & 0x1FFFFFFF;
     if (phys < 0x02000000) return "ram";
     if (phys >= 0x10000000 && phys < 0x11000000) return "io";
@@ -158,8 +139,8 @@ void InsnTrace::init() {
     mEnabled = true;
     Hooks::SetInsnSink(&insnBeforeSink, &insnAfterSink);
     Hooks::AddGuestMemSink(&insnMemSink);
-    std::fprintf(stderr,
-                 "[insn] enabled; needs PCSX2HOOK_INTERP=1 (EE interpreter) to see anything\n");
+    if (EmuConfig.Cpu.Recompiler.EnableEE)
+        std::fprintf(stderr, "[insn] enabled; needs PCSX2HOOK_EE_INTERP=1 to see anything\n");
 }
 void InsnTrace::onBefore(uint32_t pc, uint32_t code) {
     mInstructions++;
@@ -206,8 +187,6 @@ void InsnTrace::onAfter(uint32_t pc, uint32_t code) {
     const Snapshot& sBefore = f.before;
     const std::string& mnem = *f.mnem;
 
-    // Dedup on the operands, not the result: two cases with the same inputs teach nothing new, and
-    // a form whose inputs repeat forever would otherwise fill its budget with one case.
     const uint32_t rs = (code >> 21) & 0x1F, rt = (code >> 16) & 0x1F;
     const uint32_t fs = (code >> 11) & 0x1F, ft = rt;
     const uint32_t fsIdx = fs;
@@ -358,7 +337,6 @@ bool InsnTrace::runSynth() {
                  words.size());
     size_t done = 0;
     mSynthRuns = 0;
-    const auto t0 = std::chrono::steady_clock::now();
 
     const uint32_t pc = 0x00100000;
     for (uint32_t code : words) {
