@@ -58,6 +58,10 @@ void pcsx2hook::Pcsx2Host::setCore(Core& core) {
     s_core = &core;
 }
 
+void pcsx2hook::Pcsx2Host::clearCore(Core& core) {
+    if (s_core == &core) s_core = nullptr;
+}
+
 // Down here because X11 has a lot of defines that can conflict
 #if defined(__linux__)
 #include <X11/Xlib.h>

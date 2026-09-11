@@ -147,6 +147,12 @@ pcsx2hook_ctx* pcsx2hook_create(const pcsx2hook_config* config) {
 }
 
 void pcsx2hook_destroy(pcsx2hook_ctx* ctx) {
+    if (!ctx) return;
+    if (ctx->cpu.joinable()) {
+        ctx->host.requestStop();
+        ctx->cpu.join();
+    }
+    ctx->host.clearCore(ctx->core);
     delete ctx;
 }
 

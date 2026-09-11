@@ -13,6 +13,7 @@ class Core;
 class Pcsx2Host {
 public:
     void setCore(Core& core);
+    void clearCore(Core& core);
 
     void earlyInit();
 

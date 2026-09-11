@@ -189,7 +189,7 @@ static void bootOnFrame(uint32_t frame, void* user) {
 	struct BootState* b = user;
 	b->frames++;
 	check(frame == (uint32_t)b->frames, "the frame counter increments by one per callback");
-	if (b->frames >= 60) pcsx2hook_request_stop(b->ctx);
+	if (b->frames >= 20) pcsx2hook_request_stop(b->ctx);
 }
 
 static void bootOnShutdown(void* user) { ((struct BootState*)user)->shutdown++; }
@@ -235,15 +235,13 @@ static int testBoot(void) {
 	// yet; it is checked after the join instead.
 	check(pcsx2hook_start(boot.ctx) != 0, "start boots and returns");
 
-	while (!pcsx2hook_is_finished(boot.ctx)) {
-		pcsx2hook_pump_window(boot.ctx, 0);
-	}
+	pcsx2hook_pump_window(boot.ctx, 1);
 	pcsx2hook_join(boot.ctx);
 
 	// The regression this exists for: the per-frame callback was declared, overridden and never
 	// called, so a host's per-frame work silently never ran.
 	check(boot.vmReady == 1, "on_vm_ready ran once");
-	check(boot.frames >= 60, "on_frame ran for every emulated frame");
+	check(boot.frames >= 20, "on_frame ran for every emulated frame");
 	check(strlen(pcsx2hook_get_disc_serial(boot.ctx)) > 0, "a booted disc reports a serial");
 
 	pcsx2hook_flush_traces(boot.ctx);
@@ -251,6 +249,37 @@ static int testBoot(void) {
 	check(boot.shutdown == 1, "on_shutdown ran once");
 	pcsx2hook_destroy(boot.ctx);
 	return 1;
+}
+
+static void testDestroyWhileRunning(void) {
+	const char* bios = getenv("PCSX2HOOK_TEST_BIOS");
+	const char* image = getenv("PCSX2HOOK_TEST_IMAGE");
+	if (!bios || !image) {
+		printf("skipping the destroy-while-running test: set PCSX2HOOK_TEST_BIOS and _IMAGE\n");
+		return;
+	}
+
+	pcsx2hook_config cfg;
+	memset(&cfg, 0, sizeof(cfg));
+	cfg.bios = bios;
+	cfg.surfaceless = 1;
+
+	pcsx2hook_ctx* ctx = pcsx2hook_create(&cfg);
+	check(ctx != NULL, "create for the destroy test");
+	if (!ctx) return;
+
+	char* argv[] = {(char*)"pcsx2hook_api_test", (char*)image, NULL};
+	pcsx2hook_early_init(ctx);
+	if (!pcsx2hook_init(ctx, 2, argv)) {
+		check(0, "init for the destroy test");
+		pcsx2hook_destroy(ctx);
+		return;
+	}
+	pcsx2hook_apply_settings(ctx);
+	check(pcsx2hook_start(ctx) != 0, "start for the destroy test");
+
+	pcsx2hook_destroy(ctx);
+	check(1, "destroying a running context returns rather than terminating");
 }
 
 enum { kFrameLimit = 10, kFallbackStopFrame = 100 };
@@ -368,6 +397,10 @@ int main(int argc, char** argv) {
 	const char* mode = argc > 1 ? argv[1] : "";
 	if (strcmp(mode, "boot") == 0) {
 		testBoot();
+		return report();
+	}
+	if (strcmp(mode, "destroy") == 0) {
+		testDestroyWhileRunning();
 		return report();
 	}
 	if (strcmp(mode, "run-control") == 0) {

@@ -59,6 +59,7 @@ add_test(NAME pcsx2hook_api COMMAND pcsx2hook_api_test)
 # something to boot. Separate from the test above because the library keeps process-global state, so
 # a process drives one context.
 add_test(NAME pcsx2hook_boot COMMAND pcsx2hook_api_test boot)
+add_test(NAME pcsx2hook_destroy_running COMMAND pcsx2hook_api_test destroy)
 add_test(NAME pcsx2hook_run_control COMMAND pcsx2hook_api_test run-control)
 
 add_custom_target(pcsx2hook_resources
