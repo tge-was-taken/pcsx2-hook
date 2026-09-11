@@ -133,6 +133,15 @@ void Core::applyHeadlessSettings(MemorySettingsInterface& si) {
         si.SetBoolValue("EmuCore/Speedhacks", "IntcStat", false);
         si.SetBoolValue("EmuCore/Speedhacks", "vuFlagHack", false);
     }
+    if (cfg.isSet("PCSX2HOOK_EE_INTERP")) {
+        si.SetBoolValue("EmuCore/CPU/Recompiler", "EnableEE", false);
+    }
+    if (cfg.isSet("PCSX2HOOK_IOP_INTERP")) {
+        si.SetBoolValue("EmuCore/CPU/Recompiler", "EnableIOP", false);
+    }
+    if (cfg.isSet("PCSX2HOOK_VU0_INTERP")) {
+        si.SetBoolValue("EmuCore/CPU/Recompiler", "EnableVU0", false);
+    }
     // VU1 alone keeps the EE recompiler's idle-loop skip, so a savestate boot still reaches its
     // target frame quickly while hooks that only the interpreter calls back into still fire.
     if (cfg.isSet("PCSX2HOOK_VU1_INTERP")) {
@@ -203,6 +212,7 @@ bool Core::run(const VMBootParameters& params) {
         mAutopressScript = loadAutopressScript(aps);
     }
     mSaveStateFrame = uint32_t(cfg.getInt("PCSX2HOOK_SAVESTATE_FRAME", 0));
+    mFrameLimit = uint32_t(cfg.getInt("PCSX2HOOK_FRAMES", 0));
 
     // The two 'jr $ra; nop' stubs the hook registry returns through: one for a post-handler, one for
     // a guest call. They go in the kernel-reserved gap below the user ELF base (0x00100000), so they
@@ -285,7 +295,10 @@ void Core::onFrame() {
 
     // Written at shutdown, so a run that wants its trace has to reach the end rather than be
     // killed.
-    if (Diagnostics::get().getExec().finish(mFrameCount)) {
+    const bool atLimit = mFrameLimit != 0 && mFrameCount >= mFrameLimit;
+    const bool stop = atLimit || mStopRequested.load(std::memory_order_relaxed);
+    if (!mStopping && (stop || Diagnostics::get().getExec().finish(mFrameCount))) {
+        mStopping = true;
         // Widens the mined forms with edge operands. Destroys guest state, so it runs at the end of
         // the session rather than alongside the game.
         Diagnostics::get().getInsn().runSynth();
@@ -305,6 +318,10 @@ void Core::setSpeedLimit(bool enabled) {
 
 void Core::requestSaveState() {
     mSaveStateRequested.store(true, std::memory_order_relaxed);
+}
+
+void Core::requestStop() {
+    mStopRequested.store(true, std::memory_order_relaxed);
 }
 
 void Core::applyInputToPad() {

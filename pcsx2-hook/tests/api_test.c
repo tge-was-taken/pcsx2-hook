@@ -107,6 +107,10 @@ static void testErrors(pcsx2hook_ctx* ctx) {
 	check(pcsx2hook_get_last_error(ctx) != NULL, "last_error is never null");
 
 	check(pcsx2hook_enable_trace(ctx, PCSX2HOOK_TRACE_EXEC) != 0, "enabling a known trace succeeds");
+	check(pcsx2hook_enable_trace(ctx, PCSX2HOOK_TRACE_VU_INSN) != 0, "the VU vector trace is known");
+	check(pcsx2hook_enable_trace(ctx, PCSX2HOOK_TRACE_VIF_CMD) != 0, "the VIF vector trace is known");
+	check(pcsx2hook_enable_trace(ctx, PCSX2HOOK_TRACE_SPU) != 0, "the SPU2 vector trace is known");
+	check(pcsx2hook_enable_trace(ctx, PCSX2HOOK_TRACE_TIMING) != 0, "the timing trace is known");
 	check(pcsx2hook_enable_trace(ctx, (pcsx2hook_trace)999) == 0, "enabling an unknown trace fails");
 	check(strlen(pcsx2hook_get_last_error(ctx)) > 0, "a failed call leaves a reason behind");
 
@@ -131,6 +135,10 @@ static void testNullContext(void) {
 	check(pcsx2hook_get_gs_rows(NULL, 0, NULL, 0) == 0, "gs_get_rows");
 	check(pcsx2hook_resolve_symbol(NULL, 0x100000, NULL, 0) == 0, "symbols_resolve");
 	check(pcsx2hook_take_gs_capture(NULL, NULL, 0, NULL, NULL, NULL) == 0, "gs_take_capture");
+	pcsx2hook_set_interpreter(NULL, PCSX2HOOK_CPU_VU1);
+	pcsx2hook_set_accurate_timing(NULL, 1);
+	pcsx2hook_set_boot_state(NULL, "x.p2s");
+	pcsx2hook_set_frame_limit(NULL, 1);
 	pcsx2hook_push_draw(NULL, "test", 0, 0);
 	pcsx2hook_pop_draw(NULL);
 	pcsx2hook_flush_traces(NULL);
@@ -245,14 +253,126 @@ static int testBoot(void) {
 	return 1;
 }
 
+enum { kFrameLimit = 10, kFallbackStopFrame = 100 };
+
+struct RunControl {
+	uint32_t lastFrame;
+	pcsx2hook_ctx* ctx;
+};
+
+static void runControlOnFrame(uint32_t frame, void* user) {
+	struct RunControl* r = user;
+	r->lastFrame = frame;
+	if (frame >= kFallbackStopFrame) pcsx2hook_request_stop(r->ctx);
+}
+
+static long fileSize(const char* dir, const char* name) {
+	char path[640];
+	snprintf(path, sizeof(path), "%s/%s", dir, name);
+	FILE* f = fopen(path, "rb");
+	if (!f) return -1;
+	fseek(f, 0, SEEK_END);
+	const long size = ftell(f);
+	fclose(f);
+	return size;
+}
+
+static int fileContains(const char* dir, const char* name, const char* text) {
+	char path[640], line[4096];
+	snprintf(path, sizeof(path), "%s/%s", dir, name);
+	FILE* f = fopen(path, "r");
+	if (!f) return 0;
+	int found = 0;
+	while (!found && fgets(line, sizeof(line), f)) found = strstr(line, text) != NULL;
+	fclose(f);
+	return found;
+}
+
+static const char* const kRunControlFiles[] = {
+	"timing_timeline.jsonl", "vu_runs.jsonl", "vu_run_images.jsonl", "xgkick_hazards.jsonl",
+	"vu0_vectors.jsonl", "vu0_forms.jsonl", "vu1_vectors.jsonl", "vu1_forms.jsonl",
+};
+
+static void testRunControl(void) {
+	const char* bios = getenv("PCSX2HOOK_TEST_BIOS");
+	const char* image = getenv("PCSX2HOOK_TEST_IMAGE");
+	const char* state = getenv("PCSX2HOOK_TEST_STATE");
+	if (!bios || !image) {
+		printf("skipping the run-control test: set PCSX2HOOK_TEST_BIOS and _IMAGE\n");
+		return;
+	}
+
+	char dir[512];
+	snprintf(dir, sizeof(dir), "%s/pcsx2hook_test_%d", getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp",
+	         (int)getpid());
+
+	struct RunControl rc = {0};
+	pcsx2hook_config cfg;
+	memset(&cfg, 0, sizeof(cfg));
+	cfg.bios = bios;
+	cfg.dump_dir = dir;
+	cfg.surfaceless = 1;
+	cfg.on_frame = &runControlOnFrame;
+	cfg.user = &rc;
+
+	rc.ctx = pcsx2hook_create(&cfg);
+	check(rc.ctx != NULL, "create for the run-control test");
+	if (!rc.ctx) return;
+
+	pcsx2hook_set_config(rc.ctx, "PCSX2HOOK_NOMEMCARD", "1");
+	pcsx2hook_set_frame_limit(rc.ctx, kFrameLimit);
+	pcsx2hook_set_accurate_timing(rc.ctx, 1);
+	pcsx2hook_set_interpreter(rc.ctx, PCSX2HOOK_CPU_VU0 | PCSX2HOOK_CPU_VU1);
+	pcsx2hook_set_boot_state(rc.ctx, state);
+	check(pcsx2hook_enable_trace(rc.ctx, PCSX2HOOK_TRACE_TIMING) != 0, "the timing trace is enabled");
+	check(pcsx2hook_enable_trace(rc.ctx, PCSX2HOOK_TRACE_VU_INSN) != 0, "the VU vector trace is enabled");
+
+	char* argv[] = {(char*)"pcsx2hook_api_test", (char*)image, NULL};
+	pcsx2hook_early_init(rc.ctx);
+	if (!pcsx2hook_init(rc.ctx, 2, argv)) {
+		check(0, "init for the run-control test");
+		pcsx2hook_destroy(rc.ctx);
+		return;
+	}
+	pcsx2hook_apply_settings(rc.ctx);
+	check(pcsx2hook_start(rc.ctx) != 0, "start for the run-control test");
+	pcsx2hook_pump_window(rc.ctx, 1);
+	pcsx2hook_join(rc.ctx);
+	pcsx2hook_shutdown(rc.ctx);
+	pcsx2hook_destroy(rc.ctx);
+
+	check(rc.lastFrame == kFrameLimit, "the frame limit ends the run on the frame it names");
+	check(fileContains(dir, "timing_timeline.jsonl", "\"ev\":\"vsync\""),
+	      "the timing trace writes its timeline into dump_dir");
+	check(fileSize(dir, "vu_runs.jsonl") >= 0, "the timing trace writes its run file");
+	check(fileSize(dir, "vu1_forms.jsonl") >= 0, "the VU vector trace writes at shutdown");
+	if (state) check(fileSize(dir, "vu1_vectors.jsonl") > 0, "an interpreted VU1 records vectors");
+	else printf("skipping the VU1 checks: set PCSX2HOOK_TEST_STATE\n");
+
+	char path[640];
+	for (size_t i = 0; i < sizeof(kRunControlFiles) / sizeof(kRunControlFiles[0]); i++) {
+		snprintf(path, sizeof(path), "%s/%s", dir, kRunControlFiles[i]);
+		remove(path);
+	}
+	remove(dir);
+}
+
+static int report(void) {
+	printf(failures ? "%d failed\n" : "all passed\n", failures);
+	return failures != 0;
+}
+
 // The library keeps process-global state (the settings layer, the active core), so a process drives
 // one context. The two modes therefore run as separate ctest entries rather than in sequence here.
 int main(int argc, char** argv) {
-	const int wantBoot = argc > 1 && strcmp(argv[1], "boot") == 0;
-	if (wantBoot) {
+	const char* mode = argc > 1 ? argv[1] : "";
+	if (strcmp(mode, "boot") == 0) {
 		testBoot();
-		printf(failures ? "%d failed\n" : "all passed\n", failures);
-		return failures != 0;
+		return report();
+	}
+	if (strcmp(mode, "run-control") == 0) {
+		testRunControl();
+		return report();
 	}
 
 	testNullContext();
@@ -284,6 +404,5 @@ int main(int argc, char** argv) {
 	}
 
 	remove(mapPath);
-	printf(failures ? "%d failed\n" : "all passed\n", failures);
-	return failures != 0;
+	return report();
 }

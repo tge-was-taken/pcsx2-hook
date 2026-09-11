@@ -21,6 +21,7 @@ public:
 
     // For a host driving the library through its API rather than the environment.
     void set(const char* name, const char* value);
+    void unset(const char* name);
 
     const std::vector<std::pair<std::string, std::string>>& getAll() const { return mVars; }
 

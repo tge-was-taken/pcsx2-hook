@@ -37,6 +37,14 @@ void Config::set(const char* name, const char* value) {
     mVars.emplace_back(name, value);
 }
 
+void Config::unset(const char* name) {
+    const auto it = mIndex.find(name);
+    if (it == mIndex.end()) return;
+    mVars.erase(mVars.begin() + static_cast<std::ptrdiff_t>(it->second));
+    mIndex.clear();
+    for (size_t i = 0; i < mVars.size(); i++) mIndex.emplace(mVars[i].first, i);
+}
+
 const char* Config::getValue(const char* name) const {
     const auto it = mIndex.find(name);
     return it == mIndex.end() ? nullptr : mVars[it->second].second.c_str();

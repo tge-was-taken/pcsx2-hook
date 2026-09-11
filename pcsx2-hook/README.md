@@ -17,6 +17,10 @@ ctest --test-dir build
 Both options are needed: `PCSX2HOOK` compiles the emulator changes, `PCSX2HOOK_LIBRARY` builds
 `libpcsx2hook.so` on top of them.
 
+Without a BIOS the tests cover only what answers without booting. `PCSX2HOOK_TEST_BIOS` and
+`PCSX2HOOK_TEST_IMAGE` add a real boot and the run-control calls; `PCSX2HOOK_TEST_STATE`, a
+savestate for that image, adds the checks that need VU1 running.
+
 ## Use
 
 The API is `pcsx2-hook/include/pcsx2hook/pcsx2hook.h`, which is documented. The shape is:
@@ -35,7 +39,23 @@ pcsx2hook_destroy(ctx);
 ```
 
 The run loop is split rather than blocking so your thread stays free. Register hooks from the
-`on_vm_ready` callback, and do per-frame work in `on_frame`.
+`on_vm_ready` callback, and do per-frame work in `on_frame`. Before `pcsx2hook_apply_settings`,
+`pcsx2hook_set_interpreter`, `_set_accurate_timing`, `_set_boot_state` and `_set_frame_limit`
+choose which processors are interpreted, whether the timing speed hacks stay on, a savestate to
+boot into, and when the run stops and writes its traces.
+
+## Run from the command line
+
+`pcsx2hook_cli`, built beside the library, is a host made of nothing but those calls, so running a
+trace needs no program of your own:
+
+```sh
+pcsx2hook_cli --bios bios.bin --state scene.p2s --frames 30 --out traces \
+    --trace timing --accurate-timing --interp vu0,vu1 disc.iso
+```
+
+`--help` lists every trace. `--set NAME=VALUE` reaches any other setting by the variable name the
+tables below use. Traces are written when the run stops, so let `--frames` end it.
 
 ## What the fork adds
 
@@ -52,8 +72,8 @@ The run loop is split rather than blocking so your thread stays free. Register h
 Coverage costs one increment per basic block, so leave it enabled for a whole boot. The
 per-instruction traces need the interpreter and are meant to run from a savestate.
 
-Reference vectors for three more units, each a `pcsx2hook_trace` value or the variable in
-the first column:
+Reference vectors for three more units, each a `pcsx2hook_trace` value (`--trace vu-insn`,
+`vif-cmd`, `spu`) or the variable in the first column:
 
 | variable | writes | one case is |
 |---|---|---|
@@ -64,7 +84,7 @@ the first column:
 `scripts/hw_vectors_merge.py` unions them across runs, and `scripts/hw_vectors_check.py` checks
 them against models that do not come from the emulator's code.
 
-`PCSX2HOOK_TIMING_TRACE` records what those isolated cases cannot show, order and
+`PCSX2HOOK_TIMING_TRACE` (`--trace timing`) records what those isolated cases cannot show, order and
 cycle, and wants accurate timing (Instant VU1, WaitLoop and IntcStat off) plus both VU interpreters.
 `PCSX2HOOK_TIMING_TRACE_FRAMES` bounds the timeline, 10 frames by default:
 

@@ -32,6 +32,7 @@ public:
     void setPadButton(int bind, bool pressed);
     void setSpeedLimit(bool enabled);
     void requestSaveState();
+    void requestStop();
 
     uint32_t getFrameCount() const { return mFrameCount; }
 
@@ -62,10 +63,13 @@ private:
     std::vector<std::tuple<uint32_t, int, uint32_t>> mAutopressScript;
     uint32_t mSaveStateFrame = 0;
     bool mSaveStateDone = false;
+    uint32_t mFrameLimit = 0;
+    bool mStopping = false;
 
     std::atomic<bool> mPadState[kPadButtonCount] = {};
     std::atomic<int> mPendingSpeedLimit{-1};
     std::atomic<bool> mSaveStateRequested{false};
+    std::atomic<bool> mStopRequested{false};
 };
 
 }  // namespace pcsx2hook

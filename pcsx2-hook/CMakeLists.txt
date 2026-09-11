@@ -42,6 +42,11 @@ target_link_libraries(pcsx2hook PRIVATE PCSX2_FLAGS PCSX2)
 install(TARGETS pcsx2hook LIBRARY DESTINATION lib)
 install(DIRECTORY include/ DESTINATION include)
 
+add_executable(pcsx2hook_cli tools/cli.c)
+target_link_libraries(pcsx2hook_cli PRIVATE pcsx2hook)
+set_target_properties(pcsx2hook_cli PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
+install(TARGETS pcsx2hook_cli RUNTIME DESTINATION bin)
+
 # Compiled as C so the public header is checked for C compatibility, which a C++-only host would
 # never exercise. Covers the contract a caller can reach without booting: null handling, the config
 # copy, and the error string.
@@ -54,8 +59,10 @@ add_test(NAME pcsx2hook_api COMMAND pcsx2hook_api_test)
 # something to boot. Separate from the test above because the library keeps process-global state, so
 # a process drives one context.
 add_test(NAME pcsx2hook_boot COMMAND pcsx2hook_api_test boot)
+add_test(NAME pcsx2hook_run_control COMMAND pcsx2hook_api_test run-control)
 
-# The emulator looks for resources/ beside the running binary, so the test needs its own link.
-add_custom_command(TARGET pcsx2hook_api_test POST_BUILD
+add_custom_target(pcsx2hook_resources
 	COMMAND ${CMAKE_COMMAND} -E create_symlink
-		"${PROJECT_SOURCE_DIR}/bin/resources" "$<TARGET_FILE_DIR:pcsx2hook_api_test>/resources")
+		"${PROJECT_SOURCE_DIR}/bin/resources" "$<TARGET_FILE_DIR:pcsx2hook_cli>/resources")
+add_dependencies(pcsx2hook_cli pcsx2hook_resources)
+add_dependencies(pcsx2hook_api_test pcsx2hook_resources)

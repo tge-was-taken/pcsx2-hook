@@ -161,6 +161,35 @@ int pcsx2hook_enable_trace(pcsx2hook_ctx* ctx, pcsx2hook_trace which) {
     return 1;
 }
 
+namespace {
+void setOrUnset(const char* name, bool on, const char* value = "1") {
+    if (on)
+        Config::get().set(name, value);
+    else
+        Config::get().unset(name);
+}
+}  // namespace
+
+void pcsx2hook_set_interpreter(pcsx2hook_ctx* ctx, unsigned cpus) {
+    if (!ctx) return;
+    setOrUnset("PCSX2HOOK_EE_INTERP", cpus & PCSX2HOOK_CPU_EE);
+    setOrUnset("PCSX2HOOK_IOP_INTERP", cpus & PCSX2HOOK_CPU_IOP);
+    setOrUnset("PCSX2HOOK_VU0_INTERP", cpus & PCSX2HOOK_CPU_VU0);
+    setOrUnset("PCSX2HOOK_VU1_INTERP", cpus & PCSX2HOOK_CPU_VU1);
+}
+
+void pcsx2hook_set_accurate_timing(pcsx2hook_ctx* ctx, int enabled) {
+    if (ctx) setOrUnset("PCSX2HOOK_TIMING", enabled != 0, "accurate");
+}
+
+void pcsx2hook_set_boot_state(pcsx2hook_ctx* ctx, const char* path) {
+    if (ctx) setOrUnset("PCSX2HOOK_STATE", path && *path, path);
+}
+
+void pcsx2hook_set_frame_limit(pcsx2hook_ctx* ctx, uint32_t frames) {
+    if (ctx) setOrUnset("PCSX2HOOK_FRAMES", frames != 0, std::to_string(frames).c_str());
+}
+
 void pcsx2hook_early_init(pcsx2hook_ctx* ctx) {
     if (ctx) ctx->host.earlyInit();
 }

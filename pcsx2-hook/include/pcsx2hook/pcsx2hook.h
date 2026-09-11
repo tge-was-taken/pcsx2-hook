@@ -132,6 +132,15 @@ typedef enum
 	PCSX2HOOK_TRACE_TIMING   /**< VU runs and an EE-cycle event timeline. Interpreted VUs only. */
 } pcsx2hook_trace;
 
+/** @brief Processors for ::pcsx2hook_set_interpreter, as a bit mask. */
+typedef enum
+{
+	PCSX2HOOK_CPU_EE = 1,
+	PCSX2HOOK_CPU_IOP = 2,
+	PCSX2HOOK_CPU_VU0 = 4,
+	PCSX2HOOK_CPU_VU1 = 8
+} pcsx2hook_cpu;
+
 /**
  * @brief Creates a context.
  * @param config Required. Copied, except for its strings.
@@ -148,6 +157,24 @@ PCSX2HOOK_API void pcsx2hook_destroy(pcsx2hook_ctx* ctx);
  * @note Before ::pcsx2hook_start, since a trace hooks code the recompiler compiles once.
  */
 PCSX2HOOK_API int pcsx2hook_enable_trace(pcsx2hook_ctx* ctx, pcsx2hook_trace which);
+
+/** @name Run control
+ *  Before ::pcsx2hook_apply_settings.
+ *  @{ */
+
+/** @brief Interprets the ::pcsx2hook_cpu processors in @p cpus; the rest stay recompiled. */
+PCSX2HOOK_API void pcsx2hook_set_interpreter(pcsx2hook_ctx* ctx, unsigned cpus);
+
+/** @brief Turns off Instant VU1 and the idle-loop and INTC_STAT skips. */
+PCSX2HOOK_API void pcsx2hook_set_accurate_timing(pcsx2hook_ctx* ctx, int enabled);
+
+/** @brief Boots into a savestate. Null boots the disc. */
+PCSX2HOOK_API void pcsx2hook_set_boot_state(pcsx2hook_ctx* ctx, const char* path);
+
+/** @brief Stops after @p frames frames and writes the traces. 0 means no limit. */
+PCSX2HOOK_API void pcsx2hook_set_frame_limit(pcsx2hook_ctx* ctx, uint32_t frames);
+
+/** @} */
 
 /** @name Lifecycle
  *  Call in the order listed. See @ref lifecycle.
@@ -184,7 +211,7 @@ PCSX2HOOK_API int pcsx2hook_is_finished(pcsx2hook_ctx* ctx);
  */
 PCSX2HOOK_API void pcsx2hook_pump_window(pcsx2hook_ctx* ctx, int forever);
 
-/** @brief Asks emulation to stop. Returns at once; wait with ::pcsx2hook_join. */
+/** @brief Asks emulation to stop, from any thread. Returns at once; wait with ::pcsx2hook_join. */
 PCSX2HOOK_API void pcsx2hook_request_stop(pcsx2hook_ctx* ctx);
 
 /** @brief Waits for the CPU thread and returns the run's exit code. */

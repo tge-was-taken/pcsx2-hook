@@ -923,6 +923,7 @@ void pcsx2hook::Pcsx2Host::pumpWindow(bool forever) {
 }
 
 void pcsx2hook::Pcsx2Host::requestStop() {
+    if (s_core) s_core->requestStop();
     GSRunner::StopPlatformMessagePump();
 }
 
