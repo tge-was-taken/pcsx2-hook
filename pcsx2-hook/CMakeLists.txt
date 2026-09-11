@@ -17,7 +17,10 @@ add_library(pcsx2hook SHARED
 	src/trace/insn_trace.cpp
 	src/trace/iop_trace.cpp
 	src/trace/sif_trace.cpp
-	src/trace/vif_trace.cpp)
+	src/trace/spu_trace.cpp
+	src/trace/vif_cmd_trace.cpp
+	src/trace/vif_trace.cpp
+	src/trace/vu_insn_trace.cpp)
 
 target_include_directories(pcsx2hook
 	PUBLIC include

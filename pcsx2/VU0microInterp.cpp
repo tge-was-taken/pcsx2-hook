@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: GPL-3.0+
 
 #include "Common.h"
+#ifdef PCSX2HOOK
+#include "Hooks.h"
+#endif
 
 #include "VUmicro.h"
 
@@ -199,8 +202,17 @@ static void _vu0Exec(VURegs* VU)
 void vu0Exec(VURegs* VU)
 {
 	VU0.VI[REG_TPC].UL &= VU0_PROGMASK;
+#ifdef PCSX2HOOK
+	const u32 hookPc = (VU->VI[REG_TPC].UL & VU0_PROGMASK) >> 3;
+	if (Hooks::HasVuInsnSink())
+		Hooks::OnVuInsnBefore(0, hookPc);
+#endif
 	VU->cycle++;
 	_vu0Exec(VU);
+#ifdef PCSX2HOOK
+	if (Hooks::HasVuInsnSink())
+		Hooks::OnVuInsnAfter(0, hookPc);
+#endif
 
 	if (VU->VI[0].UL != 0)
 		DbgCon.Error("VI[0] != 0!!!!\n");

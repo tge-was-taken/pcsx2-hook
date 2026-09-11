@@ -77,6 +77,9 @@ const char* traceVariable(pcsx2hook_trace which) {
         case PCSX2HOOK_TRACE_VU: return "PCSX2HOOK_VU_TRACE";
         case PCSX2HOOK_TRACE_GS: return "PCSX2HOOK_GS_TRACE";
         case PCSX2HOOK_TRACE_API: return "PCSX2HOOK_API_TRACE";
+        case PCSX2HOOK_TRACE_VU_INSN: return "PCSX2HOOK_VU_INSN_TRACE";
+        case PCSX2HOOK_TRACE_VIF_CMD: return "PCSX2HOOK_VIF_CMD_TRACE";
+        case PCSX2HOOK_TRACE_SPU: return "PCSX2HOOK_SPU_TRACE";
         default: return nullptr;
     }
 }

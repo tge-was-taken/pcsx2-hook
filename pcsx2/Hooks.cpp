@@ -273,7 +273,144 @@ namespace
 	Hooks::IopInsnSink s_iopInsnAfter = nullptr;
 	Hooks::InsnSink s_insnAfter = nullptr;
 	Hooks::SyscallSink s_syscallSink = nullptr;
+	Hooks::VuInsnSink s_vuInsnBefore[2] = {};
+	Hooks::VuInsnSink s_vuInsnAfter[2] = {};
+	u32 s_vuInsnSinkCount = 0;
+	Hooks::VuMemSink s_vuMemSinks[2] = {};
+	u32 s_vuMemSinkCount = 0;
+	Hooks::VifCmdBeforeSink s_vifCmdBefore[2] = {};
+	Hooks::VifCmdAfterSink s_vifCmdAfter[2] = {};
+	u32 s_vifCmdSinkCount = 0;
+	Hooks::SpuAdpcmSink s_spuAdpcmSink = nullptr;
+	Hooks::SpuVoiceSink s_spuVoiceSink = nullptr;
+	Hooks::SpuRegWriteSink s_spuRegWrite = nullptr;
+	Hooks::SpuRegReadSink s_spuRegRead = nullptr;
 } // namespace
+
+void Hooks::SetSpuAdpcmSink(SpuAdpcmSink sink)
+{
+	s_spuAdpcmSink = sink;
+}
+
+bool Hooks::HasSpuAdpcmSink()
+{
+	return s_spuAdpcmSink != nullptr;
+}
+
+void Hooks::OnSpuAdpcm(const u8* block, s32 prev1In, s32 prev2In, const s16* samples, s32 prev1Out,
+	s32 prev2Out)
+{
+	if (s_spuAdpcmSink)
+		s_spuAdpcmSink(block, prev1In, prev2In, samples, prev1Out, prev2Out);
+}
+
+void Hooks::SetSpuVoiceSink(SpuVoiceSink sink)
+{
+	s_spuVoiceSink = sink;
+}
+
+bool Hooks::HasSpuVoiceSink()
+{
+	return s_spuVoiceSink != nullptr;
+}
+
+void Hooks::OnSpuVoice(u32 core, u32 voice, u32 stage, s32 outL, s32 outR)
+{
+	if (s_spuVoiceSink)
+		s_spuVoiceSink(core, voice, stage, outL, outR);
+}
+
+void Hooks::SetSpuRegSink(SpuRegWriteSink write, SpuRegReadSink read)
+{
+	s_spuRegWrite = write;
+	s_spuRegRead = read;
+}
+
+bool Hooks::HasSpuRegSink()
+{
+	return s_spuRegWrite != nullptr;
+}
+
+void Hooks::OnSpuRegWrite(u32 addr, u16 value, bool after)
+{
+	if (s_spuRegWrite)
+		s_spuRegWrite(addr, value, after);
+}
+
+void Hooks::OnSpuRegRead(u32 addr, u16 value)
+{
+	if (s_spuRegRead)
+		s_spuRegRead(addr, value);
+}
+
+void Hooks::AddVifCmdSink(VifCmdBeforeSink before, VifCmdAfterSink after)
+{
+	if (before && after && s_vifCmdSinkCount < std::size(s_vifCmdBefore))
+	{
+		s_vifCmdBefore[s_vifCmdSinkCount] = before;
+		s_vifCmdAfter[s_vifCmdSinkCount++] = after;
+	}
+}
+
+bool Hooks::HasVifCmdSink()
+{
+	return s_vifCmdSinkCount != 0;
+}
+
+void Hooks::OnVifCmdBefore(u32 idx, const u32* data, u32 pass)
+{
+	for (u32 i = 0; i < s_vifCmdSinkCount; i++)
+		s_vifCmdBefore[i](idx, data, pass);
+}
+
+void Hooks::OnVifCmdAfter(u32 idx, const u32* data, u32 consumed, bool done)
+{
+	for (u32 i = 0; i < s_vifCmdSinkCount; i++)
+		s_vifCmdAfter[i](idx, data, consumed, done);
+}
+
+void Hooks::AddVuInsnSink(VuInsnSink before, VuInsnSink after)
+{
+	if (before && after && s_vuInsnSinkCount < std::size(s_vuInsnBefore))
+	{
+		s_vuInsnBefore[s_vuInsnSinkCount] = before;
+		s_vuInsnAfter[s_vuInsnSinkCount++] = after;
+	}
+}
+
+bool Hooks::HasVuInsnSink()
+{
+	return s_vuInsnSinkCount != 0;
+}
+
+void Hooks::OnVuInsnBefore(u32 unit, u32 pc)
+{
+	for (u32 i = 0; i < s_vuInsnSinkCount; i++)
+		s_vuInsnBefore[i](unit, pc);
+}
+
+void Hooks::OnVuInsnAfter(u32 unit, u32 pc)
+{
+	for (u32 i = 0; i < s_vuInsnSinkCount; i++)
+		s_vuInsnAfter[i](unit, pc);
+}
+
+void Hooks::AddVuMemSink(VuMemSink sink)
+{
+	if (sink && s_vuMemSinkCount < std::size(s_vuMemSinks))
+		s_vuMemSinks[s_vuMemSinkCount++] = sink;
+}
+
+bool Hooks::HasVuMemSink()
+{
+	return s_vuMemSinkCount != 0;
+}
+
+void Hooks::OnVuMem(u32 unit, u32 addr)
+{
+	for (u32 i = 0; i < s_vuMemSinkCount; i++)
+		s_vuMemSinks[i](unit, addr);
+}
 
 void Hooks::SetExecBlockRegister(ExecBlockRegister fn)
 {

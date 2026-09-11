@@ -139,6 +139,16 @@ namespace Hooks
 	bool HasVu1StepSink();
 	void OnVu1Step(const Vu1Step& step);
 
+	using VuInsnSink = void (*)(u32 unit, u32 pc);
+	void AddVuInsnSink(VuInsnSink before, VuInsnSink after);
+	bool HasVuInsnSink();
+	void OnVuInsnBefore(u32 unit, u32 pc);
+	void OnVuInsnAfter(u32 unit, u32 pc);
+	using VuMemSink = void (*)(u32 unit, u32 addr);
+	void AddVuMemSink(VuMemSink sink);
+	bool HasVuMemSink();
+	void OnVuMem(u32 unit, u32 addr);
+
 	using GsDrawSink = void (*)(const GsDraw& draw);
 	using GsVSyncSink = void (*)();
 	void SetGsVSyncSink(GsVSyncSink sink);
@@ -153,6 +163,30 @@ namespace Hooks
 	using VifCodeSink = void (*)(u32 idx, u32 codeWord);
 	void SetVifCodeSink(VifCodeSink sink);
 	void OnVifCode(u32 idx, u32 codeWord);
+
+	using VifCmdBeforeSink = void (*)(u32 idx, const u32* data, u32 pass);
+	using VifCmdAfterSink = void (*)(u32 idx, const u32* data, u32 consumed, bool done);
+	void AddVifCmdSink(VifCmdBeforeSink before, VifCmdAfterSink after);
+	bool HasVifCmdSink();
+	void OnVifCmdBefore(u32 idx, const u32* data, u32 pass);
+	void OnVifCmdAfter(u32 idx, const u32* data, u32 consumed, bool done);
+
+	using SpuAdpcmSink = void (*)(const u8* block, s32 prev1In, s32 prev2In, const s16* samples,
+		s32 prev1Out, s32 prev2Out);
+	void SetSpuAdpcmSink(SpuAdpcmSink sink);
+	bool HasSpuAdpcmSink();
+	void OnSpuAdpcm(const u8* block, s32 prev1In, s32 prev2In, const s16* samples, s32 prev1Out,
+		s32 prev2Out);
+	using SpuVoiceSink = void (*)(u32 core, u32 voice, u32 stage, s32 outL, s32 outR);
+	void SetSpuVoiceSink(SpuVoiceSink sink);
+	bool HasSpuVoiceSink();
+	void OnSpuVoice(u32 core, u32 voice, u32 stage, s32 outL, s32 outR);
+	using SpuRegWriteSink = void (*)(u32 addr, u16 value, bool after);
+	using SpuRegReadSink = void (*)(u32 addr, u16 value);
+	void SetSpuRegSink(SpuRegWriteSink write, SpuRegReadSink read);
+	bool HasSpuRegSink();
+	void OnSpuRegWrite(u32 addr, u16 value, bool after);
+	void OnSpuRegRead(u32 addr, u16 value);
 	struct ExecBlockSlots
 	{
 		u64* count;

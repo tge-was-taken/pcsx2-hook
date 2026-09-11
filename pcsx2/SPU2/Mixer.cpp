@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: GPL-3.0+
 
 #include "Host/AudioStream.h"
+#ifdef PCSX2HOOK
+#include "Hooks.h"
+#endif
 #include "SPU2/Debug.h"
 #include "SPU2/defs.h"
 #include "SPU2/spu2.h"
@@ -136,7 +139,16 @@ static __forceinline void GetNextDataBuffered(V_Core& thiscore, uint voiceidx)
 
 
 			s16* memptr = GetMemPtr(vc.NextA & 0xFFFF8);
+#ifdef PCSX2HOOK
+			const s32 hookPrev1 = vc.Prev1;
+			const s32 hookPrev2 = vc.Prev2;
+#endif
 			XA_decode_block(vc.SBuffer, memptr, vc.Prev1, vc.Prev2);
+#ifdef PCSX2HOOK
+			if (Hooks::HasSpuAdpcmSink())
+				Hooks::OnSpuAdpcm(reinterpret_cast<const u8*>(memptr), hookPrev1, hookPrev2, vc.SBuffer,
+					vc.Prev1, vc.Prev2);
+#endif
 		}
 	}
 
@@ -372,6 +384,10 @@ static __forceinline StereoOut32 MixVoice(uint coreidx, uint voiceidx)
 {
 	V_Core& thiscore(Cores[coreidx]);
 	V_Voice& vc(thiscore.Voices[voiceidx]);
+#ifdef PCSX2HOOK
+	if (Hooks::HasSpuVoiceSink())
+		Hooks::OnSpuVoice(coreidx, voiceidx, 0, 0, 0);
+#endif
 
 	// Most games don't use much volume slide effects.  So only call the UpdateVolume
 	// methods when needed by checking the flag outside the method here...
@@ -380,6 +396,10 @@ static __forceinline StereoOut32 MixVoice(uint coreidx, uint voiceidx)
 	vc.Volume.Update();
 
 	DecodeSamples(coreidx, voiceidx);
+#ifdef PCSX2HOOK
+	if (Hooks::HasSpuVoiceSink())
+		Hooks::OnSpuVoice(coreidx, voiceidx, 1, 0, 0);
+#endif
 
 	StereoOut32 voiceOut(0, 0);
 	s32 Value = 0;
@@ -417,6 +437,10 @@ static __forceinline StereoOut32 MixVoice(uint coreidx, uint voiceidx)
 	else if (voiceidx == 3)
 		spu2M_WriteFast(((0 == coreidx) ? 0x600 : 0xe00) + OutPos, Value);
 
+#ifdef PCSX2HOOK
+	if (Hooks::HasSpuVoiceSink())
+		Hooks::OnSpuVoice(coreidx, voiceidx, 2, voiceOut.Left, voiceOut.Right);
+#endif
 	return voiceOut;
 }
 

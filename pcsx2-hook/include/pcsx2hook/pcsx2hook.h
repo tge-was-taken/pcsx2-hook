@@ -125,7 +125,10 @@ typedef enum
 	PCSX2HOOK_TRACE_VIF,  /**< VIF1 tags and code words in processed order. */
 	PCSX2HOOK_TRACE_VU,   /**< VU1 microprogram uploads and execution. */
 	PCSX2HOOK_TRACE_GS,   /**< Every GS primitive batch with resolved register state. */
-	PCSX2HOOK_TRACE_API   /**< Named function entries with their arguments. */
+	PCSX2HOOK_TRACE_API,  /**< Named function entries with their arguments. */
+	PCSX2HOOK_TRACE_VU_INSN, /**< VU0/VU1 micro-mode vectors. Interpreted VUs only. */
+	PCSX2HOOK_TRACE_VIF_CMD, /**< VIF0/VIF1 command vectors. */
+	PCSX2HOOK_TRACE_SPU      /**< SPU2 vectors. */
 } pcsx2hook_trace;
 
 /**

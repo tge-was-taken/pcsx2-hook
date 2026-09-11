@@ -440,6 +440,10 @@ u16 SPU2read(u32 rmem)
 		}
 	}
 
+#ifdef PCSX2HOOK
+	if (Hooks::HasSpuRegSink())
+		Hooks::OnSpuRegRead(rmem, ret);
+#endif
 	return ret;
 }
 
@@ -453,6 +457,10 @@ void SPU2write(u32 rmem, u16 value)
 	// incorrect pitches and loop lengths.
 
 	TimeUpdate(psxRegs.cycle);
+#ifdef PCSX2HOOK
+	if (Hooks::HasSpuRegSink())
+		Hooks::OnSpuRegWrite(rmem, value, false);
+#endif
 
 	if (rmem >> 16 == 0x1f80)
 		Cores[0].WriteRegPS1(rmem, value);
@@ -463,6 +471,10 @@ void SPU2write(u32 rmem, u16 value)
 #endif
 		SPU2_FastWrite(rmem, value);
 	}
+#ifdef PCSX2HOOK
+	if (Hooks::HasSpuRegSink())
+		Hooks::OnSpuRegWrite(rmem, value, true);
+#endif
 }
 
 s32 SPU2freeze(FreezeAction mode, freezeData* data)

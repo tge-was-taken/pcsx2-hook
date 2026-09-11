@@ -13,7 +13,10 @@
 #include "trace/insn_trace.h"
 #include "trace/iop_trace.h"
 #include "trace/sif_trace.h"
+#include "trace/spu_trace.h"
+#include "trace/vif_cmd_trace.h"
 #include "trace/vif_trace.h"
+#include "trace/vu_insn_trace.h"
 
 namespace pcsx2hook {
 
@@ -34,6 +37,9 @@ public:
     GsDraws& getGsDraws() { return mGsDraws; }
     DrawTrace& getDraws() { return mDraws; }
     VifTrace& getVif() { return mVif; }
+    VuInsnTrace& getVuInsn() { return mVuInsn; }
+    VifCmdTrace& getVifCmd() { return mVifCmd; }
+    SpuTrace& getSpu() { return mSpu; }
 
 private:
     DumpDir mDumps;
@@ -47,6 +53,9 @@ private:
     GsDraws mGsDraws;
     DrawTrace mDraws;
     VifTrace mVif;
+    VuInsnTrace mVuInsn;
+    VifCmdTrace mVifCmd;
+    SpuTrace mSpu;
 };
 
 }  // namespace pcsx2hook

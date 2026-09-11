@@ -1137,6 +1137,10 @@ static __fi void _vuMR32(VURegs* VU)
 
 __fi u32* GET_VU_MEM(VURegs* VU, u32 addr) // non-static, also used by sVU for now.
 {
+#ifdef PCSX2HOOK
+	if (Hooks::HasVuMemSink())
+		Hooks::OnVuMem(VU == &vuRegs[1] ? 1 : 0, addr);
+#endif
 	if (VU == &vuRegs[1])
 		return (u32*)(vuRegs[1].Mem + (addr & 0x3fff));
 	else if (addr & 0x4000)

@@ -176,6 +176,9 @@ bool Core::run(const VMBootParameters& params) {
     // Before the recompiler compiles anything, so the block counters exist when it asks for them.
     diag.getExec().init();
     diag.getInsn().init();
+    diag.getVuInsn().init();
+    diag.getVifCmd().init();
+    diag.getSpu().init();
     diag.getIop().init();
     diag.getHw().init();
     diag.getSif().init();
@@ -221,6 +224,9 @@ bool Core::run(const VMBootParameters& params) {
     diag.getGsTracker().report("shutdown");
     diag.getExec().write();
     diag.getInsn().write();
+    diag.getVuInsn().write();
+    diag.getVifCmd().write();
+    diag.getSpu().write();
     diag.getIop().write();
     diag.getHw().write();
     diag.getSif().write();

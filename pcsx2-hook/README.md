@@ -43,14 +43,26 @@ The run loop is split rather than blocking so your thread stays free. Register h
   and can run the original body or skip it. A post-handler runs after it returns. Same behaviour
   under the recompiler and the interpreter.
 - **Synchronous guest calls** from inside a handler.
-- **Ten traces**: EE coverage and syscalls, per-instruction reference vectors, the IOP equivalents
+- **Traces**: EE coverage and syscalls, per-instruction reference vectors, the IOP equivalents
   plus the IRX import surface, hardware register access on both CPUs, SIF, VIF1, VU1, GS batches,
-  and EE memory access.
+  EE memory access, and VU/VIF/SPU2 reference vectors.
 - **Headless software and null rendering.** Upstream needs a window for those; presenting through
   Vulkan is what makes a surfaceless run work.
 
 Coverage costs one increment per basic block, so leave it enabled for a whole boot. The
 per-instruction traces need the interpreter and are meant to run from a savestate.
+
+Reference vectors for three more units, each a `pcsx2hook_trace` value or the variable in
+the first column:
+
+| variable | writes | one case is |
+|---|---|---|
+| `PCSX2HOOK_VU_INSN_TRACE` | `vu0_vectors.jsonl`, `vu1_vectors.jsonl` | one micro-mode instruction pair, with the delay pipelines either side (needs `PCSX2HOOK_VU0_INTERP=1` or `PCSX2HOOK_VU1_INTERP=1` for that unit) |
+| `PCSX2HOOK_VIF_CMD_TRACE` | `vif_vectors.jsonl` | one VIFcode on VIF0 or VIF1, with its payload and the VU memory it wrote |
+| `PCSX2HOOK_SPU_TRACE` | `spu_*_vectors.jsonl` | an ADPCM block, an envelope step, a volume slide step, one voice sample, or a register access |
+
+`scripts/hw_vectors_merge.py` unions them across runs, and `scripts/hw_vectors_check.py` checks
+them against models that do not come from the emulator's code.
 
 ## Layout
 

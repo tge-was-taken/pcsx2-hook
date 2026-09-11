@@ -244,8 +244,17 @@ static void _vu1Exec(VURegs* VU)
 
 void vu1Exec(VURegs* VU)
 {
+#ifdef PCSX2HOOK
+	const u32 hookPc = (VU->VI[REG_TPC].UL & 0x3fff) >> 3;
+	if (Hooks::HasVuInsnSink())
+		Hooks::OnVuInsnBefore(1, hookPc);
+#endif
 	VU->cycle++;
 	_vu1Exec(VU);
+#ifdef PCSX2HOOK
+	if (Hooks::HasVuInsnSink())
+		Hooks::OnVuInsnAfter(1, hookPc);
+#endif
 
 	if (VU->VI[0].UL != 0)
 		DbgCon.Error("VI[0] != 0!!!!\n");

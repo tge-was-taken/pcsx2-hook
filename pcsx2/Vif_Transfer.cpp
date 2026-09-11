@@ -51,7 +51,15 @@ _vifT void vifTransferLoop(u32* &data) {
 			}
 		}
 
+#ifdef PCSX2HOOK
+		if (Hooks::HasVifCmdSink())
+			Hooks::OnVifCmdBefore(idx, data, vifX.pass);
+#endif
 		ret = vifCmdHandler[idx][vifX.cmd & 0x7f](vifX.pass, data);
+#ifdef PCSX2HOOK
+		if (Hooks::HasVifCmdSink())
+			Hooks::OnVifCmdAfter(idx, data, ret, vifX.cmd == 0);
+#endif
 		data   += ret;
 		pSize  -= ret;
 		if (vifX.vifstalled.enabled)
