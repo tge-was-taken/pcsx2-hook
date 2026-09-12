@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Compare a native render against the emulated GS reference, at 640x448 only.
 
-Usage: scripts/refdiff.py [--rect x0,y0,x1,y1] <base>   # <base>-emu.png vs <base>-native.ppm
-       scripts/refdiff.py [--rect ...] <a.png|a.ppm> <b.ppm>
+Usage: scripts/refdiff.py [--rect x0,y0,x1,y1] <base>   # <base>-emu.png vs <base>-native.png
+       scripts/refdiff.py [--rect ...] <a.png|a.ppm> <b.png|b.ppm>
 """
 import struct
 import sys
@@ -99,14 +99,14 @@ def main():
         rect = [int(v) for v in args[1].split(",")]
         args = args[2:]
     if len(args) == 1:
-        ref, ours = args[0] + "-emu.png", args[0] + "-native.ppm"
+        ref, ours = args[0] + "-emu.png", args[0] + "-native.png"
     elif len(args) == 2:
         ref, ours = args
     else:
         print(__doc__)
         return 2
     rw, rh, a = read_any(ref)
-    ow, oh, b = read_ppm(ours)
+    ow, oh, b = read_any(ours)
     if (rw, rh) != (ow, oh):
         raise SystemExit(f"size mismatch: reference {rw}x{rh}, render {ow}x{oh}")
     x0, y0, x1, y1 = rect if rect else (0, 0, rw, rh)
