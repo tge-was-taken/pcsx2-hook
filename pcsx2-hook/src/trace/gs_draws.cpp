@@ -355,8 +355,10 @@ void GsDraws::onDraw(const Hooks::GsDraw& d) {
         vertexRow = verts.take();
     }
 
-    if (mDumpFirst >= 0 && int(mFrameIndex) > mDumpFirst && int(mFrameIndex) <= mDumpLast + 1) {
-        dumpDrawBuffer(d, mFrameIndex - 1, mGsFrame.load());
+    const uint32_t gsFrame = mGsFrame.load();
+    if (mDumpFirst >= 0 && int(mFrameIndex) > mDumpFirst && int(mFrameIndex) <= mDumpLast + 1 &&
+        gsFrame >= mDumpFrameFirst && gsFrame <= mDumpFrameLast) {
+        dumpDrawBuffer(d, mFrameIndex - 1, gsFrame);
     }
     // Rows arrive on the GS thread and the file is closed from another, so both go under the lock.
     const std::lock_guard<std::mutex> lock(mMutex);
@@ -389,6 +391,11 @@ void GsDraws::init() {
         mDumpLast = dash ? std::atoi(dash + 1) : mDumpFirst;
         const char* base = Config::get().getValue("PCSX2HOOK_GS_DUMP_OUT");
         mDumpBase = base ? base : Diagnostics::get().getDumps().getPath("gsbatch");
+        if (const char* frames = Config::get().getValue("PCSX2HOOK_GS_DUMP_FRAMES")) {
+            const char* frameDash = std::strchr(frames, '-');
+            mDumpFrameFirst = uint32_t(std::atoi(frames));
+            mDumpFrameLast = frameDash ? uint32_t(std::atoi(frameDash + 1)) : mDumpFrameFirst;
+        }
         std::fprintf(stderr,
                      "[gsdraw] dumping the draw buffer before batches %d..%d -> "
                      "%s_f<frame>_beforeB<i>.ppm\n",

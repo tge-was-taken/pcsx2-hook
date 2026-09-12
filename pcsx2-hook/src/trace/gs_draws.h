@@ -62,6 +62,8 @@ private:
     std::deque<FrameRecords> mKept;
     bool mDeferred = false;
     int mDumpFirst = -1, mDumpLast = -1;
+    // PCSX2HOOK_GS_DUMP_FRAMES narrows the dump to these GS frames; every frame otherwise.
+    uint32_t mDumpFrameFirst = 0, mDumpFrameLast = UINT32_MAX;
     std::string mDumpBase;
     FbTarget mLastTarget;
     std::vector<uint32_t> mDisplayFbps;
