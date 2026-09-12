@@ -79,9 +79,8 @@ static constexpr VkClearValue s_present_clear_color = {{{0.0f, 0.0f, 0.0f, 1.0f}
 static std::mutex s_instance_mutex;
 
 // Device extensions that are required for PCSX2.
-static constexpr const char* s_required_device_extensions[] = {
-	VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME,
-};
+// VK_KHR_push_descriptor is optional: dzn (Vulkan over D3D12, the only GPU Vulkan under WSL) lacks it.
+static constexpr std::array<const char*, 0> s_required_device_extensions{};
 
 GSDeviceVK::GSDeviceVK()
 {
@@ -445,6 +444,7 @@ bool GSDeviceVK::SelectDeviceExtensions(ExtensionList* extension_list, bool enab
 #endif
 
 	m_optional_extensions.vk_ext_fragment_shader_interlock = SupportsExtension(VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME, false);
+	m_optional_extensions.vk_khr_push_descriptor = SupportsExtension(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME, false);
 
 	return true;
 }
@@ -775,17 +775,17 @@ bool GSDeviceVK::ProcessDeviceExtensions()
 
 	VkPhysicalDevicePushDescriptorPropertiesKHR push_descriptor_properties = {
 		VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PUSH_DESCRIPTOR_PROPERTIES_KHR};
-	Vulkan::AddPointerToChain(&properties2, &push_descriptor_properties);
+	if (m_optional_extensions.vk_khr_push_descriptor)
+		Vulkan::AddPointerToChain(&properties2, &push_descriptor_properties);
 
 	// query
 	vkGetPhysicalDeviceProperties2(m_physical_device, &properties2);
 
-	// confirm we actually support it
-	if (push_descriptor_properties.maxPushDescriptors < NUM_TFX_TEXTURES)
+	if (m_optional_extensions.vk_khr_push_descriptor && push_descriptor_properties.maxPushDescriptors < NUM_TFX_TEXTURES)
 	{
-		Console.Error("VK: maxPushDescriptors (%u) is below required (%u)", push_descriptor_properties.maxPushDescriptors,
-			NUM_TFX_TEXTURES);
-		return false;
+		Console.Warning("VK: maxPushDescriptors (%u) is below required (%u), allocating sets instead",
+			push_descriptor_properties.maxPushDescriptors, NUM_TFX_TEXTURES);
+		m_optional_extensions.vk_khr_push_descriptor = false;
 	}
 
 	if (m_optional_extensions.vk_ext_line_rasterization && !line_rasterization_feature.bresenhamLines)
@@ -961,6 +961,25 @@ bool GSDeviceVK::CreateCommandBuffers()
 			return false;
 		}
 		Vulkan::SetObjectName(m_device, resources.fence, "Frame Fence %u", frame_index);
+
+		if (!m_optional_extensions.vk_khr_push_descriptor)
+		{
+			static constexpr u32 max_sets = 8192;
+			static constexpr VkDescriptorPoolSize pool_sizes[] = {
+				{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, max_sets * 4},
+				{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, max_sets * 4},
+				{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, max_sets * 2},
+				{VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, max_sets * 2},
+			};
+			const VkDescriptorPoolCreateInfo descriptor_pool_info = {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+				nullptr, 0, max_sets, static_cast<u32>(std::size(pool_sizes)), pool_sizes};
+			res = vkCreateDescriptorPool(m_device, &descriptor_pool_info, nullptr, &resources.descriptor_pool);
+			if (res != VK_SUCCESS)
+			{
+				LOG_VULKAN_ERROR(res, "vkCreateDescriptorPool failed: ");
+				return false;
+			}
+		}
 		++frame_index;
 	}
 
@@ -1096,6 +1115,27 @@ VkDescriptorSet GSDeviceVK::AllocatePersistentDescriptorSet(VkDescriptorSetLayou
 		return VK_NULL_HANDLE;
 
 	return descriptor_set;
+}
+
+bool GSDeviceVK::PushDescriptorSet(Vulkan::DescriptorSetUpdateBuilder& dsub, VkPipelineBindPoint bind_point,
+	VkPipelineLayout layout, u32 set, VkDescriptorSetLayout set_layout)
+{
+	const VkCommandBuffer cmdbuf = GetCurrentCommandBuffer();
+	if (m_optional_extensions.vk_khr_push_descriptor)
+	{
+		dsub.PushUpdate(cmdbuf, bind_point, layout, set);
+		return true;
+	}
+
+	const VkDescriptorSetAllocateInfo allocate_info = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, nullptr,
+		m_frame_resources[m_current_frame].descriptor_pool, 1, &set_layout};
+	VkDescriptorSet descriptor_set;
+	if (vkAllocateDescriptorSets(m_device, &allocate_info, &descriptor_set) != VK_SUCCESS)
+		return false;
+
+	dsub.UpdateSet(m_device, descriptor_set);
+	vkCmdBindDescriptorSets(cmdbuf, bind_point, layout, set, 1, &descriptor_set, 0, nullptr);
+	return true;
 }
 
 void GSDeviceVK::FreePersistentDescriptorSet(VkDescriptorSet set)
@@ -1426,6 +1466,13 @@ void GSDeviceVK::ActivateCommandBuffer(u32 index)
 	res = vkResetCommandPool(m_device, resources.command_pool, 0);
 	if (res != VK_SUCCESS)
 		LOG_VULKAN_ERROR(res, "vkResetCommandPool failed: ");
+
+	if (resources.descriptor_pool != VK_NULL_HANDLE)
+	{
+		res = vkResetDescriptorPool(m_device, resources.descriptor_pool, 0);
+		if (res != VK_SUCCESS)
+			LOG_VULKAN_ERROR(res, "vkResetDescriptorPool failed: ");
+	}
 
 	// Enable commands to be recorded to the two buffers again.
 	VkCommandBufferBeginInfo begin_info = {
@@ -3986,7 +4033,8 @@ bool GSDeviceVK::CreatePipelineLayouts()
 	// Convert Pipeline Layout
 	//////////////////////////////////////////////////////////////////////////
 
-	dslb.SetPushFlag();
+	if (m_optional_extensions.vk_khr_push_descriptor)
+		dslb.SetPushFlag();
 	dslb.AddBinding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, NUM_UTILITY_SAMPLERS, VK_SHADER_STAGE_FRAGMENT_BIT);
 	if ((m_utility_ds_layout = dslb.Create(dev)) == VK_NULL_HANDLE)
 		return false;
@@ -4015,7 +4063,8 @@ bool GSDeviceVK::CreatePipelineLayouts()
 		return false;
 	Vulkan::SetObjectName(dev, m_tfx_ubo_ds_layout, "TFX UBO descriptor layout");
 
-	dslb.SetPushFlag();
+	if (m_optional_extensions.vk_khr_push_descriptor)
+		dslb.SetPushFlag();
 	dslb.AddBinding(TFX_TEXTURE_TEXTURE, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT);
 	dslb.AddBinding(TFX_TEXTURE_PALETTE, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_FRAGMENT_BIT);
 	dslb.AddBinding(TFX_TEXTURE_RT,
@@ -4544,7 +4593,8 @@ bool GSDeviceVK::CompileCASPipelines()
 	Vulkan::DescriptorSetLayoutBuilder dslb;
 	Vulkan::PipelineLayoutBuilder plb;
 
-	dslb.SetPushFlag();
+	if (m_optional_extensions.vk_khr_push_descriptor)
+		dslb.SetPushFlag();
 	dslb.AddBinding(0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT);
 	dslb.AddBinding(1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT);
 	if ((m_cas_ds_layout = dslb.Create(dev)) == VK_NULL_HANDLE)
@@ -4752,7 +4802,8 @@ bool GSDeviceVK::DoCAS(
 	Vulkan::DescriptorSetUpdateBuilder dsub;
 	dsub.AddImageDescriptorWrite(VK_NULL_HANDLE, 0, sTexVK->GetView(), sTexVK->GetVkLayout());
 	dsub.AddStorageImageDescriptorWrite(VK_NULL_HANDLE, 1, dTexVK->GetView(), dTexVK->GetVkLayout());
-	dsub.PushUpdate(cmdbuf, VK_PIPELINE_BIND_POINT_COMPUTE, m_cas_pipeline_layout, 0, false);
+	if (!PushDescriptorSet(dsub, VK_PIPELINE_BIND_POINT_COMPUTE, m_cas_pipeline_layout, 0, m_cas_ds_layout))
+		Console.Error("VK: Out of descriptor sets for CAS");
 
 	// the actual meat and potatoes! only four commands.
 	static const int threadGroupWorkRegionDim = 16;
@@ -4889,6 +4940,8 @@ void GSDeviceVK::DestroyResources()
 		}
 		if (resources.command_pool != VK_NULL_HANDLE)
 			vkDestroyCommandPool(m_device, resources.command_pool, nullptr);
+		if (resources.descriptor_pool != VK_NULL_HANDLE)
+			vkDestroyDescriptorPool(m_device, resources.descriptor_pool, nullptr);
 	}
 
 	if (m_timestamp_query_pool != VK_NULL_HANDLE)
@@ -5749,6 +5802,10 @@ bool GSDeviceVK::ApplyTFXState(bool already_execed)
 	if (m_features.vs_expand && (flags & DIRTY_FLAG_VS_PUSH_CONSTANTS))
 		SetVSPushConstants(m_vs_pc_cache.base_vertex, m_vs_pc_cache.base_index, true);
 
+	// A set allocated per update starts empty, so it takes every binding, not only the changed ones.
+	if ((flags & DIRTY_FLAG_TFX_TEXTURES) && !m_optional_extensions.vk_khr_push_descriptor)
+		flags |= DIRTY_FLAG_TFX_TEXTURES;
+
 	if (flags & DIRTY_FLAG_TFX_TEXTURES)
 	{
 		if (flags & DIRTY_FLAG_TFX_TEXTURE_TEX)
@@ -5804,7 +5861,18 @@ bool GSDeviceVK::ApplyTFXState(bool already_execed)
 				m_tfx_textures[TFX_TEXTURE_DEPTH_ROV]->GetVkLayout(), true);
 		}
 
-		dsub.PushUpdate(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, m_tfx_pipeline_layout, TFX_DESCRIPTOR_SET_TEXTURES);
+		if (!PushDescriptorSet(dsub, VK_PIPELINE_BIND_POINT_GRAPHICS, m_tfx_pipeline_layout,
+				TFX_DESCRIPTOR_SET_TEXTURES, m_tfx_texture_ds_layout))
+		{
+			if (already_execed)
+			{
+				Console.Error("VK: Failed to allocate TFX descriptor set");
+				return false;
+			}
+
+			ExecuteCommandBufferAndRestartRenderPass(false, "Ran out of descriptor sets");
+			return ApplyTFXState(true);
+		}
 	}
 
 	ApplyBaseState(flags, cmdbuf);
@@ -5827,7 +5895,17 @@ bool GSDeviceVK::ApplyUtilityState(bool already_execed)
 		Vulkan::DescriptorSetUpdateBuilder dsub;
 		dsub.AddCombinedImageSamplerDescriptorWrite(
 			VK_NULL_HANDLE, 0, m_utility_texture->GetView(), m_utility_sampler, m_utility_texture->GetVkLayout());
-		dsub.PushUpdate(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, m_utility_pipeline_layout, 0, false);
+		if (!PushDescriptorSet(dsub, VK_PIPELINE_BIND_POINT_GRAPHICS, m_utility_pipeline_layout, 0, m_utility_ds_layout))
+		{
+			if (already_execed)
+			{
+				Console.Error("VK: Failed to allocate utility descriptor set");
+				return false;
+			}
+
+			ExecuteCommandBufferAndRestartRenderPass(false, "Ran out of descriptor sets");
+			return ApplyUtilityState(true);
+		}
 	}
 
 

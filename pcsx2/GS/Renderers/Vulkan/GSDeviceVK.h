@@ -25,6 +25,11 @@
 
 class VKSwapChain;
 
+namespace Vulkan
+{
+	class DescriptorSetUpdateBuilder;
+}
+
 class GSDeviceVK final : public GSDevice
 {
 public:
@@ -47,6 +52,7 @@ public:
 		bool vk_khr_shader_non_semantic_info : 1;
 		bool vk_ext_attachment_feedback_loop_layout : 1;
 		bool vk_ext_fragment_shader_interlock : 1;
+		bool vk_khr_push_descriptor : 1;
 	};
 
 	// Global state accessors
@@ -103,6 +109,11 @@ public:
 
 	/// Allocates a descriptor set from the pool reserved for the current frame.
 	VkDescriptorSet AllocatePersistentDescriptorSet(VkDescriptorSetLayout set_layout);
+
+	/// Pushes the writes, or without VK_KHR_push_descriptor binds a fresh set holding them.
+	/// Returns false when the frame's pool is exhausted.
+	bool PushDescriptorSet(Vulkan::DescriptorSetUpdateBuilder& dsub, VkPipelineBindPoint bind_point,
+		VkPipelineLayout layout, u32 set, VkDescriptorSetLayout set_layout);
 
 	/// Frees a descriptor set allocated from the global pool.
 	void FreePersistentDescriptorSet(VkDescriptorSet set);
@@ -222,6 +233,8 @@ private:
 		// [0] - Init (upload) command buffer, [1] - draw command buffer
 		VkCommandPool command_pool = VK_NULL_HANDLE;
 		std::array<VkCommandBuffer, 2> command_buffers{VK_NULL_HANDLE, VK_NULL_HANDLE};
+		// Sets standing in for push descriptors, reset when the frame's fence retires.
+		VkDescriptorPool descriptor_pool = VK_NULL_HANDLE;
 		VkFence fence = VK_NULL_HANDLE;
 		u64 fence_counter = 0;
 		s32 spin_id = -1;

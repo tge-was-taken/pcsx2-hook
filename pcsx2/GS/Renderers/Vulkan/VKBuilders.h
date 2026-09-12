@@ -237,6 +237,7 @@ namespace Vulkan
 		void Clear();
 
 		void Update(VkDevice device, bool clear = true);
+		void UpdateSet(VkDevice device, VkDescriptorSet set, bool clear = true);
 		void PushUpdate(VkCommandBuffer cmdbuf, VkPipelineBindPoint bind_point, VkPipelineLayout layout, u32 set,
 			bool clear = true);
 
