@@ -51,4 +51,7 @@ void setBorrowedWindow(const std::optional<WindowInfo>& window);
 /// through a recompiled block and the state it writes will not resume.
 void drainCpuThreadQueue();
 
+/// Queues for the next drain without ending the current execution slice.
+void queueOnCpuThread(std::function<void()> function);
+
 }  // namespace pcsx2hook

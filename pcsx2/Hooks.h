@@ -74,6 +74,10 @@ namespace Hooks
 	// return address, and a savestate taken now cannot be resumed.
 	size_t PendingReturns();
 
+	// Ends the VM's current execution slice when the last pending return is taken, so a savestate
+	// waiting on the CPU thread's queue runs at the one point it can be resumed from.
+	void PauseWhenNoReturnsPending();
+
 	// EE thread, inside a hook handler, non-blocking targets only (EE interrupts are masked).
 	u32 CallEE(u32 pc, std::initializer_list<u32> gpr = {}, std::initializer_list<float> fpr = {});
 

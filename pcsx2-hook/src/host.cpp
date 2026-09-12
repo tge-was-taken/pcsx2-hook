@@ -350,9 +350,19 @@ void Host::RunOnCPUThread(std::function<void()> function, bool /* block */) {
         const std::lock_guard<std::mutex> lock(s_cpuQueueMutex);
         s_cpuQueue.push_back(std::move(function));
     }
-    // Ends the current VMManager::Execute so the runner reaches its drain.
-    VMManager::SetState(VMState::Paused);
+    // Ends the current VMManager::Execute so the runner reaches its drain. A stop already asked for
+    // ends it too, and pausing over it would have the runner resume the VM instead of stopping.
+    if (VMManager::GetState() == VMState::Running) VMManager::SetState(VMState::Paused);
 }
+
+namespace pcsx2hook {
+
+void queueOnCpuThread(std::function<void()> function) {
+    const std::lock_guard<std::mutex> lock(s_cpuQueueMutex);
+    s_cpuQueue.push_back(std::move(function));
+}
+
+}  // namespace pcsx2hook
 
 namespace pcsx2hook {
 

@@ -46,6 +46,7 @@ namespace
 		u32 sp;
 	};
 	std::vector<PendingReturn> s_returnStack;
+	bool s_pauseWhenIdle = false;
 
 	Hooks::Context liveContext(u32 pc)
 	{
@@ -74,6 +75,11 @@ void Hooks::SetReturnSentinel(u32 addr)
 size_t Hooks::PendingReturns()
 {
 	return s_returnStack.size();
+}
+
+void Hooks::PauseWhenNoReturnsPending()
+{
+	s_pauseWhenIdle = true;
 }
 
 void Hooks::SetCallMarker(u32 addr)
@@ -132,6 +138,11 @@ int Hooks::Dispatch()
 				pr.post(ctx);
 			}
 			cpuRegs.pc = pr.realRa;
+			if (s_pauseWhenIdle && s_returnStack.empty() && VMManager::GetState() == VMState::Running)
+			{
+				s_pauseWhenIdle = false;
+				VMManager::SetState(VMState::Paused);
+			}
 			return 1;
 		}
 		// A return was stolen and never handed back, so $ra is the sentinel and setting pc from it

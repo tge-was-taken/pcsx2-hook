@@ -336,24 +336,28 @@ int pcsx2hook_load_state(pcsx2hook_ctx* ctx, const char* path) {
 }
 
 // A call in flight holds the sentinel in $ra, and no savestate carries the host stack with the real
-// one. Retried rather than refused: each drain runs the guest a slice further, so the call returns.
+// one. So the save waits for the moment the last pending return is taken, when Hooks ends the slice.
 static void saveWhenNothingIsInFlight(const std::string& target, int attempt) {
     static const int kMaxAttempts = 64;
     if (Hooks::PendingReturns() != 0) {
+        if (attempt == 0)
+            Console.WriteLn(fmt::format("pcsx2hook: {} waits for {} hooked calls to return", target,
+                                        Hooks::PendingReturns()));
         if (attempt >= kMaxAttempts) {
             Console.Error(fmt::format("pcsx2hook: {} hooked calls are still in flight after {} "
                                       "attempts; not writing {}, it could not be resumed",
                                       Hooks::PendingReturns(), attempt, target));
             return;
         }
-        Host::RunOnCPUThread(
-            [target, attempt]() { saveWhenNothingIsInFlight(target, attempt + 1); }, false);
+        pcsx2hook::queueOnCpuThread(
+            [target, attempt]() { saveWhenNothingIsInFlight(target, attempt + 1); });
+        Hooks::PauseWhenNoReturnsPending();
         return;
     }
-    if (attempt != 0)
-        Console.WriteLn(fmt::format("pcsx2hook: {} waited {} VM slices for hooked calls to return",
-                                    target, attempt));
-    VMManager::SaveState(target.c_str(), false, false, {});
+    VMManager::SaveState(target.c_str(), false, false, [target](const std::string& error) {
+        Console.Error(fmt::format("pcsx2hook: writing {} failed: {}", target, error));
+    });
+    Console.WriteLn(fmt::format("pcsx2hook: saved {} after {} waits", target, attempt));
 }
 
 int pcsx2hook_save_state(pcsx2hook_ctx* ctx, const char* path) {
