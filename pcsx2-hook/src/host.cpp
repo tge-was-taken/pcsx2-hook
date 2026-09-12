@@ -12,6 +12,7 @@
 #include <ctime>
 #include <filesystem>
 #include <mutex>
+#include <vector>
 #include <thread>
 
 #ifdef _WIN32
@@ -132,6 +133,29 @@ static float s_perf_sum_gs_thread_time = 0.0f;
 static float s_perf_sum_gpu_time = 0.0f;
 static float s_perf_sum_gpu_usage = 0.0f;
 
+// The overlay is created with the graphics device, and it will not start without
+// a font, so anything that opens a device says which one first.
+bool pcsx2hook::setDefaultFont() {
+    const std::string roboto_path = EmuFolders::GetOverridableResourcePath(
+        "fonts" FS_OSPATH_SEPARATOR_STR "Roboto-Regular.ttf");
+    const auto roboto_data = FileSystem::MapBinaryFileForRead(roboto_path.c_str());
+    if (roboto_data.empty()) {
+        Console.ErrorFmt("Failed to load font file '{}'.", roboto_path);
+        return false;
+    }
+
+    std::vector<ImGuiManager::FontInfo> fonts;
+    ImGuiManager::FontInfo fi{};
+    fi.data = roboto_data;
+    fi.exclude_ranges = {};
+    fi.face_name = nullptr;
+    fi.is_emoji_font = false;
+    fonts.push_back(fi);
+
+    ImGuiManager::SetFonts(std::move(fonts));
+    return true;
+}
+
 bool GSRunner::InitializeConfig() {
     EmuFolders::SetAppRoot();
     if (!EmuFolders::SetResourcesDirectory() || !EmuFolders::SetDataDirectory(nullptr))
@@ -142,25 +166,7 @@ bool GSRunner::InitializeConfig() {
     const char* error;
     if (!VMManager::PerformEarlyHardwareChecks(&error)) return false;
 
-    {
-        const std::string roboto_path = EmuFolders::GetOverridableResourcePath(
-            "fonts" FS_OSPATH_SEPARATOR_STR "Roboto-Regular.ttf");
-        const auto roboto_data = FileSystem::MapBinaryFileForRead(roboto_path.c_str());
-        if (roboto_data.empty()) {
-            Console.ErrorFmt("Failed to load font file '{}'.", roboto_path);
-            return false;
-        }
-
-        std::vector<ImGuiManager::FontInfo> fonts;
-        ImGuiManager::FontInfo fi{};
-        fi.data = roboto_data;
-        fi.exclude_ranges = {};
-        fi.face_name = nullptr;
-        fi.is_emoji_font = false;
-        fonts.push_back(fi);
-
-        ImGuiManager::SetFonts(std::move(fonts));
-    }
+    if (!pcsx2hook::setDefaultFont()) return false;
 
     MemorySettingsInterface& si = s_settings_interface;
     Host::Internal::SetBaseSettingsLayer(&si);
@@ -235,7 +241,17 @@ void Host::SetMouseMode(bool relative_mode, bool hide_cursor) {}
 
 void Host::SetMouseLock(bool state) {}
 
+// A host that owns its own window says so before opening the GS, and then the
+// renderer draws into that rather than into one of ours.
+static std::optional<WindowInfo> s_borrowed_window;
+
+void pcsx2hook::setBorrowedWindow(const std::optional<WindowInfo>& window) {
+    s_borrowed_window = window;
+}
+
 std::optional<WindowInfo> Host::AcquireRenderWindow(bool recreate_window) {
+    if (s_borrowed_window.has_value())
+        return s_borrowed_window;
     return GSRunner::GetPlatformWindowInfo();
 }
 
@@ -319,9 +335,37 @@ void Host::OnSaveStateLoaded(const std::string_view filename, bool was_successfu
 
 void Host::OnSaveStateSaved(const std::string_view filename) {}
 
-void Host::RunOnCPUThread(std::function<void()> function, bool block /* = false */) {
-    pxFailRel("Not implemented");
+namespace {
+
+std::mutex s_cpuQueueMutex;
+std::vector<std::function<void()>> s_cpuQueue;
+
+}  // namespace
+
+// Deferred rather than blocking: the caller is usually the CPU thread itself, inside a hook or a
+// frame callback, so waiting here would deadlock and running here is exactly what is unsafe.
+void Host::RunOnCPUThread(std::function<void()> function, bool /* block */) {
+    if (!function) return;
+    {
+        const std::lock_guard<std::mutex> lock(s_cpuQueueMutex);
+        s_cpuQueue.push_back(std::move(function));
+    }
+    // Ends the current VMManager::Execute so the runner reaches its drain.
+    VMManager::SetState(VMState::Paused);
 }
+
+namespace pcsx2hook {
+
+void drainCpuThreadQueue() {
+    std::vector<std::function<void()>> queued;
+    {
+        const std::lock_guard<std::mutex> lock(s_cpuQueueMutex);
+        queued.swap(s_cpuQueue);
+    }
+    for (const std::function<void()>& fn : queued) fn();
+}
+
+}  // namespace pcsx2hook
 
 void Host::RefreshGameListAsync(bool invalidate_cache) {}
 

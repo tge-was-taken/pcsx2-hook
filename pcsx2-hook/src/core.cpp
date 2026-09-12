@@ -9,6 +9,8 @@
 #include <sstream>
 #include <string>
 
+#include "host.h"
+
 #include "common/Console.h"
 #include "common/Error.h"
 #include "common/MemorySettingsInterface.h"
@@ -213,6 +215,15 @@ bool Core::run(const VMBootParameters& params) {
     Hooks::SetReturnSentinel(sentinel);
     Hooks::SetCallMarker(sentinel + 8);
 
+    // The settings that change what a trace sees, reported as they ended up rather than as they
+    // were asked for. MTVU is the one that matters: PCSX2 turns it back on in
+    // SetHardwareDependentDefaultSettings whenever the host has three or more cores, so a run's GS
+    // path can differ between machines, and VU1 output then reaches the GS through the MTGS ring
+    // instead of the path a DMA tag can be attributed to.
+    std::fprintf(stderr, "[pcsx2hook] mtvu=%d ee-rec=%d vu1-rec=%d renderer=%d\n",
+                 int(EmuConfig.Speedhacks.vuThread), int(EmuConfig.Cpu.Recompiler.EnableEE),
+                 int(EmuConfig.Cpu.Recompiler.EnableVU1), int(EmuConfig.GS.Renderer));
+
     onVmReady();
 
     VMManager::SetLimiterMode(cfg.isSet("PCSX2HOOK_EE_LIMIT")
@@ -222,6 +233,7 @@ bool Core::run(const VMBootParameters& params) {
 
     for (;;) {
         VMManager::Execute();
+        pcsx2hook::drainCpuThreadQueue();
         const VMState st = VMManager::GetState();
         if (st == VMState::Shutdown || st == VMState::Stopping) break;
         if (st == VMState::Paused) VMManager::SetState(VMState::Running);

@@ -636,10 +636,16 @@ void GSRenderer::VSync(u32 field, bool registers_written, bool idle_frame)
 		}
 	}
 
-	const bool blank_frame = !Merge(field);
-
 	m_last_draw_n = s_n;
 	m_last_transfer_n = s_transfer_n;
+
+	// A host that owns the display drives the renderer with no device behind it.
+	// Everything past here composes the circuits into one and presents it, which
+	// is that host's to do.
+	if (!g_gs_device)
+		return;
+
+	const bool blank_frame = !Merge(field);
 
 	// Skip presentation when running uncapped while vsync is on.
 	if (skip_frame || g_gs_device->ShouldSkipPresentingFrame())

@@ -66,6 +66,11 @@ void GSgifSoftReset(u32 mask);
 void GSwriteCSR(u32 csr);
 void GSInitAndReadFIFO(u8* mem, u32 size);
 void GSReadLocalMemoryUnsync(u8* mem, u32 qwc, u64 BITBLITBUF, u64 TRXPOS, u64 TRXREG);
+// For a host that owns the graphics interface and, without a window, presents
+// the picture itself.
+bool GSopenForHost(u8* basemem, GSRendererType renderer, int threads, bool windowed);
+void GScloseForHost();
+
 void GSgifTransfer(const u8* mem, u32 size);
 void GSgifTransfer1(u8* mem, u32 addr);
 void GSgifTransfer2(u8* mem, u32 size);

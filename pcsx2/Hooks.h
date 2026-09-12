@@ -70,6 +70,10 @@ namespace Hooks
 
 	void SetReturnSentinel(u32 addr);
 
+	// Hooked calls awaiting a post-handler. Non-zero means the guest holds the sentinel as a
+	// return address, and a savestate taken now cannot be resumed.
+	size_t PendingReturns();
+
 	// EE thread, inside a hook handler, non-blocking targets only (EE interrupts are masked).
 	u32 CallEE(u32 pc, std::initializer_list<u32> gpr = {}, std::initializer_list<float> fpr = {});
 
@@ -84,6 +88,18 @@ namespace Hooks
 	void AddDmaKickSink(DmaKickSink sink);
 	void OnDmaKick(u32 chan, u32 eepc, u32 madr, u32 qwc);
 
+	// One vertex as the GS received it, which is VU1's output: the same quantity a renderer's own
+	// vertex stage computes, so the two diff directly instead of through a batch-to-draw match.
+	struct GsVertexOut
+	{
+		float x, y;
+		u32 z;
+		u32 rgba;
+		float s, t, q;
+		u32 u, v;
+		u32 fog;
+	};
+
 	struct GsDraw
 	{
 		u64 prim, tex0, tex1, clamp, test, alpha, frame, scissor, zbuf;
@@ -96,7 +112,16 @@ namespace Hooks
 		void (*syncPixels)(const void* ctx);
 		u32 (*readPixel)(const void* ctx, int x, int y);
 		const void* readCtx;
+		// Reads one of the nverts vertices, in the order the GS draws them.
+		void (*readVertex)(const void* ctx, u32 index, GsVertexOut* out);
+		const void* vertexCtx;
 	};
+	// A sink may suppress the batch it was just handed, so a host can reduce a frame to one draw and
+	// diff it against its own without matching anything. Read and cleared by the GS immediately
+	// after OnGsDraw, so it is per batch and never leaks into the next.
+	void SetSkipCurrentDraw(bool skip);
+	bool TakeSkipCurrentDraw();
+
 	using Vu1UploadSink = void (*)(u32 addr, const u32* words, u32 count);
 	void SetVu1UploadSink(Vu1UploadSink sink);
 	void OnVu1Upload(u32 addr, const u32* words, u32 count);

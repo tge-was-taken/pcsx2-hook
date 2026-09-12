@@ -2549,6 +2549,31 @@ void GSState::FlushPrim()
 		hookFb = HookFbRead{this, &m_mem, m_context->FRAME.Block(), m_context->FRAME.FBW,
 			m_context->FRAME.PSM};
 		hookDraw.readCtx = &hookFb;
+		// The vertices this batch draws, which is VU1's output. The bbox loop above already walks
+		// them; this hands them out whole so a trace can diff per vertex instead of sampling one.
+		struct HookVertexRead
+		{
+			const GSVertex* verts;
+			const u16* index;
+		};
+		static thread_local HookVertexRead hookVerts;
+		hookVerts = HookVertexRead{m_vertex->buff, m_index->buff};
+		hookDraw.vertexCtx = &hookVerts;
+		hookDraw.readVertex = [](const void* ctx, u32 i, Hooks::GsVertexOut* out) {
+			const HookVertexRead* v = static_cast<const HookVertexRead*>(ctx);
+			const GSVertex& g = v->verts[v->index[i]];
+			// XY are 12.4 fixed point with the context's offset still applied.
+			out->x = float(g.XYZ.X) / 16.0f;
+			out->y = float(g.XYZ.Y) / 16.0f;
+			out->z = g.XYZ.Z;
+			out->rgba = g.RGBAQ.U32[0];
+			out->s = g.ST.S;
+			out->t = g.ST.T;
+			out->q = g.RGBAQ.Q;
+			out->u = g.U;
+			out->v = g.V;
+			out->fog = g.FOG;
+		};
 		const GSVector2i hookRes = PCRTCDisplays.GetResolution();
 		hookDraw.dispW = u32(hookRes.x);
 		hookDraw.dispH = u32(hookRes.y);
@@ -2699,7 +2724,9 @@ void GSState::FlushPrim()
 		}
 
 		// Skip draw if Z test is enabled, but set to fail all pixels.
-		const bool skip_draw = (m_context->TEST.ZTE && m_context->TEST.ZTST == ZTST_NEVER);
+		// A sink can suppress this batch, which is how a frame is reduced to one draw for a diff.
+		const bool skip_draw = (m_context->TEST.ZTE && m_context->TEST.ZTST == ZTST_NEVER) ||
+							   Hooks::TakeSkipCurrentDraw();
 		m_quad_check_valid = false;
 		m_quad_check_valid_shuffle = false;
 		m_drawlist.clear();

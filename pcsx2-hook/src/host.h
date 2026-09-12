@@ -3,7 +3,10 @@
 
 #pragma once
 
+#include "common/WindowInfo.h"
+
 #include <atomic>
+#include <optional>
 #include <thread>
 
 namespace pcsx2hook {
@@ -35,5 +38,17 @@ public:
 
     void shutdown();
 };
+
+/// Loads the font the overlay needs, which is created along with a graphics device.
+bool setDefaultFont();
+
+/// The window a host lends the renderer to draw into, instead of one of ours. Say it before
+/// opening the GS; an empty optional gives our own window back.
+void setBorrowedWindow(const std::optional<WindowInfo>& window);
+
+/// Runs whatever Host::RunOnCPUThread queued. Call it where the VM is between executions: that is
+/// the only point a savestate can be written from, since inside a frame callback the CPU is partway
+/// through a recompiled block and the state it writes will not resume.
+void drainCpuThreadQueue();
 
 }  // namespace pcsx2hook

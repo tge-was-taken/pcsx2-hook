@@ -12,12 +12,18 @@
 #include <vector>
 
 #include "Memory.h"
+#include "common/Console.h"
 #include "common/Error.h"
 #include "common/MemorySettingsInterface.h"
 #include "pcsx2/Hooks.h"
 #include "pcsx2/MTGS.h"
+#include "GS/GSLocalMemory.h"
+#include "GS/Renderers/Common/GSRenderer.h"
 #include "pcsx2/R5900.h"
+#include "pcsx2/Host.h"
 #include "pcsx2/VMManager.h"
+#include "fmt/format.h"
+
 #include "config.h"
 #include "core.h"
 #include "diagnostics.h"
@@ -160,7 +166,11 @@ int pcsx2hook_enable_trace(pcsx2hook_ctx* ctx, pcsx2hook_trace which) {
         ctx->error = "unknown trace";
         return 0;
     }
-    Config::get().set(name, "1");
+    // Several traces take a path in the same variable that switches them on, so a caller that has
+    // already given one must not have it replaced by a bare flag.
+    if (!Config::get().getValue(name)) {
+        Config::get().set(name, "1");
+    }
     return 1;
 }
 
@@ -198,7 +208,12 @@ void pcsx2hook_early_init(pcsx2hook_ctx* ctx) {
 }
 
 int pcsx2hook_init(pcsx2hook_ctx* ctx, int argc, char** argv) {
-    return ctx && ctx->host.init(argc, argv) ? 1 : 0;
+    if (!ctx) return 0;
+    if (ctx->host.init(argc, argv)) return 1;
+    // The host prints the detail to the log; a caller only asking last_error should still get told
+    // something rather than an empty string.
+    ctx->error = "init failed: no image, or the emulator could not configure itself";
+    return 0;
 }
 
 int pcsx2hook_wants_window(pcsx2hook_ctx* ctx) {
@@ -320,9 +335,33 @@ int pcsx2hook_load_state(pcsx2hook_ctx* ctx, const char* path) {
     return 1;
 }
 
+// A call in flight holds the sentinel in $ra, and no savestate carries the host stack with the real
+// one. Retried rather than refused: each drain runs the guest a slice further, so the call returns.
+static void saveWhenNothingIsInFlight(const std::string& target, int attempt) {
+    static const int kMaxAttempts = 64;
+    if (Hooks::PendingReturns() != 0) {
+        if (attempt >= kMaxAttempts) {
+            Console.Error(fmt::format("pcsx2hook: {} hooked calls are still in flight after {} "
+                                      "attempts; not writing {}, it could not be resumed",
+                                      Hooks::PendingReturns(), attempt, target));
+            return;
+        }
+        Host::RunOnCPUThread(
+            [target, attempt]() { saveWhenNothingIsInFlight(target, attempt + 1); }, false);
+        return;
+    }
+    if (attempt != 0)
+        Console.WriteLn(fmt::format("pcsx2hook: {} waited {} VM slices for hooked calls to return",
+                                    target, attempt));
+    VMManager::SaveState(target.c_str(), false, false, {});
+}
+
 int pcsx2hook_save_state(pcsx2hook_ctx* ctx, const char* path) {
     if (!ctx || !path) return 0;
-    VMManager::SaveState(path, false, false, {});
+    // Through the CPU thread's queue, which is where the emulator runs its own save hotkey: taken
+    // from inside a frame callback the VM is mid-block, and the state it writes cannot be resumed.
+    const std::string target = path;
+    Host::RunOnCPUThread([target]() { saveWhenNothingIsInFlight(target, 0); }, true);
     return 1;
 }
 
@@ -354,11 +393,157 @@ size_t pcsx2hook_read_framebuffer(pcsx2hook_ctx* ctx, void* out, size_t size, ui
     return needed;
 }
 
+size_t pcsx2hook_read_gs_pixels(pcsx2hook_ctx* ctx, uint32_t tbp0, uint32_t tbw, uint32_t psm,
+                                uint32_t width, uint32_t height, uint32_t* out, size_t count) {
+    if (!ctx || psm >= 64) return 0;
+
+    const size_t needed = size_t(width) * height;
+    if (!out || count < needed) return needed;
+
+    // Per-texel through the format's own reader, the way GSLocalMemory::SaveBMP does: it takes no
+    // CLUT and leaves no state behind, so the emulated draws after this see what they did before.
+    bool ok = false;
+    MTGS::RunOnGSThread([&]() {
+        if (!g_gs_renderer) return;
+        GSLocalMemory& mem = g_gs_renderer->m_mem;
+        const GSLocalMemory::readPixel read = GSLocalMemory::m_psm[psm].rp;
+        for (uint32_t y = 0; y < height; y++) {
+            for (uint32_t x = 0; x < width; x++) {
+                out[size_t(y) * width + x] = (mem.*read)(int(x), int(y), tbp0, tbw);
+            }
+        }
+        ok = true;
+    });
+    MTGS::WaitGS(false, false, false);
+    if (!ok) {
+        ctx->error = "no GS renderer to read from";
+        return 0;
+    }
+    return needed;
+}
+
 size_t pcsx2hook_get_gs_rows(pcsx2hook_ctx* ctx, uint32_t frame, char* out, size_t size) {
     if (!ctx) return 0;
     const std::string rows = Diagnostics::get().getGsDraws().getRowsForFrame(frame);
     if (out && size >= rows.size() + 1) std::memcpy(out, rows.c_str(), rows.size() + 1);
     return rows.size() + 1;
+}
+
+namespace {
+
+uint32_t png_crc32(const uint8_t* data, size_t length, uint32_t crc = 0) {
+    static uint32_t table[256];
+    static bool built = false;
+    if (!built) {
+        for (uint32_t i = 0; i < 256; i++) {
+            uint32_t c = i;
+            for (int k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320u ^ (c >> 1)) : (c >> 1);
+            table[i] = c;
+        }
+        built = true;
+    }
+    crc = ~crc;
+    for (size_t i = 0; i < length; i++) crc = table[(crc ^ data[i]) & 0xFF] ^ (crc >> 8);
+    return ~crc;
+}
+
+void putBe32(std::vector<uint8_t>& out, uint32_t v) {
+    out.push_back(uint8_t(v >> 24));
+    out.push_back(uint8_t(v >> 16));
+    out.push_back(uint8_t(v >> 8));
+    out.push_back(uint8_t(v));
+}
+
+void putChunk(std::FILE* f, const char tag[4], const std::vector<uint8_t>& body) {
+    std::vector<uint8_t> framed;
+    putBe32(framed, uint32_t(body.size()));
+    framed.insert(framed.end(), tag, tag + 4);
+    framed.insert(framed.end(), body.begin(), body.end());
+    const uint32_t crc = png_crc32(framed.data() + 4, framed.size() - 4);
+    putBe32(framed, crc);
+    std::fwrite(framed.data(), 1, framed.size(), f);
+}
+
+/// A zlib stream of stored blocks, which is a valid deflate stream that compresses nothing.
+void putIdat(std::FILE* f, const std::vector<uint8_t>& raw) {
+    std::vector<uint8_t> z{0x78, 0x01};
+    uint32_t a = 1;
+    uint32_t b = 0;
+    for (uint8_t byte : raw) {
+        a = (a + byte) % 65521;
+        b = (b + a) % 65521;
+    }
+    for (size_t at = 0; at < raw.size() || raw.empty(); ) {
+        const size_t left = raw.size() - at;
+        const uint16_t block = uint16_t(left > 65535 ? 65535 : left);
+        z.push_back(uint8_t(block == left ? 1 : 0));
+        z.push_back(uint8_t(block & 0xFF));
+        z.push_back(uint8_t(block >> 8));
+        z.push_back(uint8_t(~block & 0xFF));
+        z.push_back(uint8_t((~block >> 8) & 0xFF));
+        z.insert(z.end(), raw.begin() + long(at), raw.begin() + long(at + block));
+        at += block;
+        if (at >= raw.size()) break;
+    }
+    putBe32(z, (b << 16) | a);
+    putChunk(f, "IDAT", z);
+}
+
+void writePng(std::FILE* f, uint32_t width, uint32_t height, const std::vector<uint8_t>& raw) {
+    static const uint8_t signature[8] = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'};
+    std::fwrite(signature, 1, sizeof(signature), f);
+
+    std::vector<uint8_t> ihdr;
+    putBe32(ihdr, width);
+    putBe32(ihdr, height);
+    ihdr.push_back(8);  // bit depth
+    ihdr.push_back(2);  // truecolour
+    ihdr.push_back(0);
+    ihdr.push_back(0);
+    ihdr.push_back(0);
+    putChunk(f, "IHDR", ihdr);
+
+    putIdat(f, raw);
+    putChunk(f, "IEND", {});
+}
+
+}  // namespace
+
+int pcsx2hook_write_framebuffer(pcsx2hook_ctx* ctx, const char* path) {
+    if (!ctx || !path) return 0;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    const size_t needed = pcsx2hook_read_framebuffer(ctx, nullptr, 0, &width, &height);
+    if (needed == 0 || width == 0 || height == 0) {
+        ctx->error = "no frame buffer to read";
+        return 0;
+    }
+    std::vector<uint32_t> pixels(needed / sizeof(uint32_t));
+    if (pcsx2hook_read_framebuffer(ctx, pixels.data(), needed, &width, &height) != needed) {
+        ctx->error = "the frame buffer changed size between the size query and the read";
+        return 0;
+    }
+    std::FILE* f = std::fopen(path, "wb");
+    if (!f) {
+        ctx->error = "cannot open the frame buffer file";
+        return 0;
+    }
+    // Uncompressed PNG: stored deflate blocks need no compression library, so the runner gains a
+    // format every viewer opens without the API gaining a dependency.
+    std::vector<uint8_t> raw;
+    raw.reserve(size_t(height) * (1 + size_t(width) * 3));
+    for (uint32_t y = 0; y < height; y++) {
+        raw.push_back(0);  // filter: none
+        for (uint32_t x = 0; x < width; x++) {
+            const uint32_t pixel = pixels[size_t(y) * width + x];
+            raw.push_back(uint8_t(pixel & 0xFF));
+            raw.push_back(uint8_t((pixel >> 8) & 0xFF));
+            raw.push_back(uint8_t((pixel >> 16) & 0xFF));
+        }
+    }
+    writePng(f, width, height, raw);
+    std::fclose(f);
+    return 1;
 }
 
 void pcsx2hook_push_draw(pcsx2hook_ctx* ctx, const char* label, uint32_t object,
@@ -390,6 +575,12 @@ size_t pcsx2hook_resolve_symbol(pcsx2hook_ctx* ctx, uint32_t pc, char* out, size
 
 int pcsx2hook_is_in_code_range(pcsx2hook_ctx* ctx, uint32_t pc) {
     return ctx && getSymbols().isInCodeRange(pc) ? 1 : 0;
+}
+
+uint32_t pcsx2hook_find_symbol(pcsx2hook_ctx* ctx, const char* name) {
+    if (!ctx || !name) return 0;
+    getSymbols().load();
+    return getSymbols().find(name);
 }
 
 void pcsx2hook_load_symbols(pcsx2hook_ctx* ctx) {

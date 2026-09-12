@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <cmath>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -113,7 +114,75 @@ void GsDraws::onVSync() {
     }
 }
 
+// Whether the per-vertex stream is wanted. Large, so it is asked for rather than assumed.
+static bool wantVertices() {
+    static const bool on = Config::get().getValue("PCSX2HOOK_GS_VERTS") != nullptr;
+    return on;
+}
+
+// PCSX2HOOK_GS_ONLY reduces a frame to the batches worth looking at, so a diff needs no matching:
+// comma separated terms, each "i=N", "i=A-B", "tbp=N" or "prim=N". A batch matching any term draws
+// and the rest are suppressed. Empty means draw everything.
+//
+// PCSX2HOOK_GS_SKIP takes the same grammar and does the opposite: a batch matching any term is
+// suppressed and the rest draw. That is what isolates one pass's contribution, because GS_ONLY does
+// not clear the frame buffer and so leaves the previous frame under whatever it kept. Shoot the
+// frame twice, once plain and once skipping the pass, and the difference is the pass alone.
+struct DrawFilter {
+    std::vector<std::pair<long, long>> index;
+    std::vector<long> tbp;
+    std::vector<long> prim;
+    bool any = false;
+    bool invert = false;
+};
+
+static const DrawFilter& drawFilter() {
+    static const DrawFilter filter = [] {
+        DrawFilter f;
+        const char* spec = Config::get().getValue("PCSX2HOOK_GS_ONLY");
+        if (!spec) {
+            spec = Config::get().getValue("PCSX2HOOK_GS_SKIP");
+            f.invert = spec != nullptr;
+        }
+        if (!spec) return f;
+        f.any = true;
+        for (const char* p = spec; *p;) {
+            char* end = nullptr;
+            if (std::strncmp(p, "i=", 2) == 0) {
+                const long lo = std::strtol(p + 2, &end, 0);
+                long hi = lo;
+                if (end && *end == '-') hi = std::strtol(end + 1, &end, 0);
+                f.index.emplace_back(lo, hi);
+            } else if (std::strncmp(p, "tbp=", 4) == 0) {
+                f.tbp.push_back(std::strtol(p + 4, &end, 0));
+            } else if (std::strncmp(p, "prim=", 5) == 0) {
+                f.prim.push_back(std::strtol(p + 5, &end, 0));
+            } else {
+                end = const_cast<char*>(p);
+                while (*end && *end != ',') end++;
+            }
+            p = (end && *end == ',') ? end + 1 : (end ? end : p + 1);
+        }
+        std::fprintf(stderr, "[gsdraw] %s active: %zu index, %zu tbp, %zu prim terms\n",
+                     f.invert ? "GS_SKIP" : "GS_ONLY", f.index.size(), f.tbp.size(),
+                     f.prim.size());
+        return f;
+    }();
+    return filter;
+}
+
 void GsDraws::onDraw(const Hooks::GsDraw& d) {
+    // Ahead of the recording check: suppressing draws is useful on its own, without a trace file.
+    if (const DrawFilter& filter = drawFilter(); filter.any) {
+        const long tbp = long(d.tex0 & 0x3FFF);
+        const long prim = long(d.prim & 7);
+        bool keep = false;
+        for (const auto& [lo, hi] : filter.index)
+            keep = keep || (long(mIndex) >= lo && long(mIndex) <= hi);
+        for (long t : filter.tbp) keep = keep || t == tbp;
+        for (long p : filter.prim) keep = keep || p == prim;
+        if (keep == filter.invert) Hooks::SetSkipCurrentDraw(true);
+    }
     const uint32_t fbp = unsigned((d.frame & 0x1FF) << 5);
     for (uint32_t disp : {d.dispFbp0, d.dispFbp1}) {
         if (disp != ~0u &&
@@ -138,11 +207,12 @@ void GsDraws::onDraw(const Hooks::GsDraw& d) {
     const uint64_t test = d.test, alpha = d.alpha, frame = d.frame, scissor = d.scissor;
     const float* bbox = d.bbox;
     const uint32_t rgbaq = d.rgbaq, nverts = d.nverts;
+
     const auto bits = [](uint64_t v, unsigned lo, unsigned n) {
         return unsigned((v >> lo) & ((1ull << n) - 1));
     };
-    const std::string row =
-        JsonObject()
+    JsonObject builder;
+    builder
             .addString("type", "gs")
             .addUint("i", mFrameIndex++)
             .addUint("f", mGsFrame.load())
@@ -215,15 +285,88 @@ void GsDraws::onDraw(const Hooks::GsDraw& d) {
             .addInt("disp1", int(d.dispFbp1))
             .addUint("fog", d.fog)
             .addReal("q", double(d.q))
-            .addHex("vu", Diagnostics::get().getDraws().getRunningProgram(), 16)
-            .take();
-    if (mOut) {
-        mIndex++;
+            .addHex("vu", Diagnostics::get().getDraws().getRunningProgram(), 16);
+
+    // One sampled vertex cannot say whether a batch shaded flat, which is the whole question when
+    // comparing against a renderer's own vertex stage, so the range goes in every row.
+    if (d.readVertex && nverts) {
+        unsigned lo[4] = {255, 255, 255, 255};
+        unsigned hi[4] = {0, 0, 0, 0};
+        for (unsigned i = 0; i < nverts; i++) {
+            Hooks::GsVertexOut v{};
+            d.readVertex(d.vertexCtx, i, &v);
+            for (int c = 0; c < 4; c++) {
+                const unsigned x = (v.rgba >> (8 * c)) & 0xFF;
+                lo[c] = x < lo[c] ? x : lo[c];
+                hi[c] = x > hi[c] ? x : hi[c];
+            }
+        }
+        builder.addUints("rgbaLo", {lo[0], lo[1], lo[2], lo[3]})
+            .addUints("rgbaHi", {hi[0], hi[1], hi[2], hi[3]});
     }
+    const std::string row = builder.take();
+
+    std::string vertexRow;
+    if (wantVertices() && d.readVertex && mOut) {
+        // Parallel arrays rather than an object per vertex: fewer writer states to get wrong, and
+        // far smaller for a stream that runs to millions of vertices.
+        std::vector<double> vx, vy, vs, vt;
+        std::vector<unsigned> vz, vrgba, vu, vv, vfog;
+        vx.reserve(nverts);
+        for (unsigned i = 0; i < nverts; i++) {
+            Hooks::GsVertexOut v{};
+            d.readVertex(d.vertexCtx, i, &v);
+            vx.push_back(double(v.x));
+            vy.push_back(double(v.y));
+            vs.push_back(double(v.s));
+            vt.push_back(double(v.t));
+            vz.push_back(v.z);
+            vrgba.push_back(v.rgba);
+            vu.push_back(v.u);
+            vv.push_back(v.v);
+            vfog.push_back(v.fog);
+        }
+        JsonObject verts;
+        verts.addString("type", "gsverts")
+            .addUint("i", mIndex)
+            .addUint("f", mGsFrame.load())
+            .addUint("nverts", nverts);
+        // The writer refuses a non-finite double, and a GS vertex carries them: an untextured
+        // batch leaves Q at zero and the S/T that divides by it comes out infinite.
+        const auto reals = [&verts](const char* key, const std::vector<double>& xs) {
+            verts.beginArray(key);
+            for (double x : xs) verts.pushReal(std::isfinite(x) ? x : 0.0, 6);
+            verts.endArray();
+        };
+        const auto uints = [&verts](const char* key, const std::vector<unsigned>& xs) {
+            verts.beginArray(key);
+            for (unsigned x : xs) verts.pushUint(x);
+            verts.endArray();
+        };
+        reals("x", vx);
+        reals("y", vy);
+        uints("z", vz);
+        uints("rgba", vrgba);
+        uints("u", vu);
+        uints("v", vv);
+        reals("s", vs);
+        reals("t", vt);
+        uints("fog", vfog);
+        vertexRow = verts.take();
+    }
+
     if (mDumpFirst >= 0 && int(mFrameIndex) > mDumpFirst && int(mFrameIndex) <= mDumpLast + 1) {
         dumpDrawBuffer(d, mFrameIndex - 1, mGsFrame.load());
     }
+    // Rows arrive on the GS thread and the file is closed from another, so both go under the lock.
     const std::lock_guard<std::mutex> lock(mMutex);
+    if (mOut) {
+        // One write per batch, on the one lock: a second fwrite here took the EE down inside
+        // recExecute with a corrupt stack, the same way a stray GS-side read does.
+        if (!vertexRow.empty()) std::fwrite(vertexRow.data(), 1, vertexRow.size(), mOut);
+        std::fwrite(row.data(), 1, row.size(), mOut);
+        mIndex++;
+    }
     if (!mKept.empty()) {
         mKept.back().rows.emplace_back(row);
     }
@@ -387,6 +530,7 @@ size_t GsDraws::writeLastFrame(std::FILE* out) {
     return best->rows.size();
 }
 void GsDraws::close() {
+    const std::lock_guard<std::mutex> lock(mMutex);
     if (mOut) {
         std::fprintf(stderr, "[gsdraw] wrote %llu GS draws\n",
                      static_cast<unsigned long long>(mIndex));

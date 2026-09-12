@@ -5,6 +5,11 @@
 
 #include "Memory.h"
 #include "R5900.h"
+#include "VMManager.h"
+
+#include "common/Console.h"
+
+#include "fmt/format.h"
 
 #include <iterator>
 #include <unordered_map>
@@ -66,6 +71,11 @@ void Hooks::SetReturnSentinel(u32 addr)
 	s_hooks[addr];
 }
 
+size_t Hooks::PendingReturns()
+{
+	return s_returnStack.size();
+}
+
 void Hooks::SetCallMarker(u32 addr)
 {
 	s_callMarker = addr;
@@ -124,8 +134,20 @@ int Hooks::Dispatch()
 			cpuRegs.pc = pr.realRa;
 			return 1;
 		}
-		cpuRegs.pc = cpuRegs.GPR.n.ra.UL[0];
-		return 1;
+		// A return was stolen and never handed back, so $ra is the sentinel and setting pc from it
+		// would spin here forever. Returning 0 runs the stub instead, which spends the cycles a
+		// stop is only noticed at.
+		static bool s_reportedLostReturn = false;
+		if (!s_reportedLostReturn)
+		{
+			s_reportedLostReturn = true;
+			Console.Error(fmt::format(
+				"Hooks: return to the sentinel with nothing pending at sp {:08X}. The savestate was "
+				"written while a hooked call was in flight, so the real return address is gone and "
+				"the guest cannot continue.", sp));
+		}
+		VMManager::SetState(VMState::Stopping);
+		return 0;
 	}
 
 	const auto it = s_hooks.find(pc);
@@ -245,6 +267,23 @@ void Hooks::OnVifCode(u32 idx, u32 codeWord)
 void Hooks::SetGsDrawSink(GsDrawSink sink)
 {
 	s_gsDrawSink = sink;
+}
+
+namespace
+{
+	thread_local bool s_skipCurrentDraw = false;
+}
+
+void Hooks::SetSkipCurrentDraw(bool skip)
+{
+	s_skipCurrentDraw = skip;
+}
+
+bool Hooks::TakeSkipCurrentDraw()
+{
+	const bool skip = s_skipCurrentDraw;
+	s_skipCurrentDraw = false;
+	return skip;
 }
 
 void Hooks::OnGsDraw(const GsDraw& draw)

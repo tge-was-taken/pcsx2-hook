@@ -54,8 +54,15 @@ void Symbols::load() {
     if (const char* env = Config::get().getValue("PCSX2HOOK_SYMBOLS")) {
         std::error_code ec;
         if (std::filesystem::is_directory(env, ec)) {
-            const std::string elf = getElfName(mSerial);
-            if (!elf.empty()) path = (std::filesystem::path(env) / (elf + ".map")).string();
+            const std::filesystem::path directory(env);
+            for (const std::string& stem : {mSerial, getElfName(mSerial)}) {
+                if (stem.empty()) continue;
+                const std::filesystem::path candidate = directory / (stem + ".map");
+                if (std::filesystem::exists(candidate, ec)) {
+                    path = candidate.string();
+                    break;
+                }
+            }
         } else {
             path = env;
         }
@@ -63,8 +70,8 @@ void Symbols::load() {
     if (path.empty()) {
         std::fprintf(stderr,
                      "[eesym] no symbol map for %s (PCs will be raw); point PCSX2HOOK_SYMBOLS at a "
-                     ".map file or at a directory holding %s.map\n",
-                     mSerial.c_str(), getElfName(mSerial).c_str());
+                     ".map file or at a directory holding %s.map or %s.map\n",
+                     mSerial.c_str(), mSerial.c_str(), getElfName(mSerial).c_str());
         return;
     }
 
@@ -86,6 +93,13 @@ void Symbols::load() {
 
 bool Symbols::isLoaded() const {
     return !mSyms.empty();
+}
+
+uint32_t Symbols::find(const std::string& name) const {
+    for (const auto& [address, symbol] : mSyms) {
+        if (symbol == name) return address;
+    }
+    return 0;
 }
 
 bool Symbols::isInCodeRange(uint32_t pc) const {

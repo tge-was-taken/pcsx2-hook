@@ -3,6 +3,7 @@ add_library(pcsx2hook SHARED
 	src/config.cpp
 	src/core.cpp
 	src/diagnostics.cpp
+	src/gs.cpp
 	src/host.cpp
 	src/symbols.cpp
 	src/trace/api_trace.cpp

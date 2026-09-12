@@ -14,6 +14,7 @@
 #include "GS/GSUtil.h"
 #include "GS/MultiISA.h"
 #include "Host.h"
+#include "Memory.h"
 #include "Input/InputManager.h"
 #include "MTGS.h"
 #include "pcsx2/GS.h"
@@ -424,6 +425,34 @@ void GSInitAndReadFIFO(u8* mem, u32 size)
 void GSReadLocalMemoryUnsync(u8* mem, u32 qwc, u64 BITBLITBUF, u64 TRXPOS, u64 TRXREG)
 {
 	g_gs_renderer->ReadLocalMemoryUnsync(mem, qwc, GIFRegBITBLTBUF{BITBLITBUF}, GIFRegTRXPOS{TRXPOS}, GIFRegTRXREG{TRXREG});
+}
+
+// For a host that owns the graphics interface itself. Without a window the
+// software renderer runs with no device at all and the host reads the picture
+// out of local memory; with one, this is the ordinary path and PCSX2 presents.
+bool GSopenForHost(u8* basemem, GSRendererType renderer, int threads, bool windowed)
+{
+	// The rasteriser writes its scanline code into the recompilers' memory, and
+	// nothing has reserved it when no machine is being emulated.
+	if (!SysMemory::Allocate())
+		return false;
+
+	GSConfig = Pcsx2Config::GSOptions();
+	GSConfig.SWExtraThreads = threads;
+
+	if (!windowed && renderer == GSRendererType::SW)
+		return OpenGSRenderer(GSRendererType::SW, basemem);
+
+	return GSopen(GSConfig, renderer, basemem, GSVSyncMode::Disabled, false);
+}
+
+void GScloseForHost()
+{
+	if (g_gs_device)
+		GSclose();
+	else
+		CloseGSRenderer();
+	SysMemory::Release();
 }
 
 void GSgifTransfer(const u8* mem, u32 size)

@@ -16,6 +16,9 @@ public:
     bool isLoaded() const;
     std::string resolve(uint32_t pc) const;
     bool isInCodeRange(uint32_t pc) const;
+    // Zero when the map does not name it, which a caller must treat as "do not hook" rather than
+    // as an address.
+    uint32_t find(const std::string& name) const;
     const std::vector<std::pair<uint32_t, std::string>>& getEntries() const { return mSyms; }
 
 private:

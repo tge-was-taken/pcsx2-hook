@@ -253,6 +253,36 @@ PCSX2HOOK_API size_t pcsx2hook_read_framebuffer(pcsx2hook_ctx* ctx, void* out, s
 	uint32_t* width, uint32_t* height);
 
 /**
+ * @brief Writes the emulated frame buffer to an uncompressed PNG file.
+ * @return Non-zero on success, zero when there is nothing to read or the file cannot be written.
+ * @note Seeing where a run actually reached is often the fastest way to explain a trace, so this
+ *       saves every host reimplementing the read-and-encode.
+ */
+PCSX2HOOK_API int pcsx2hook_write_framebuffer(pcsx2hook_ctx* ctx, const char* path);
+
+/**
+ * @brief Reads a texture out of GS memory, unswizzled and through its CLUT.
+ *
+ * The GS keeps a texture long after the game has dropped its own copy, which is the only way to
+ * recover one a savestate was taken after the game uploaded.
+ *
+ * Values come back raw: a paletted format gives its indices, so the caller applies its own palette
+ * and nothing here touches the renderer's CLUT cache. Reading through that cache instead leaves it
+ * loaded for a TEX0 the game never asked for, and the emulated draws after it crash.
+ *
+ * @param tbp0 Word address of the buffer, in 64-word units, as GS TEX0 states it.
+ * @param tbw Buffer width in 64-pixel units.
+ * @param psm GS pixel storage mode.
+ * @param width Texels per row to read.
+ * @param height Rows to read.
+ * @param out Receives width*height values, one per texel, or null to ask for the count.
+ * @param count Values @p out can hold.
+ * @return Values the read needs, or 0 if there is no GS to read.
+ */
+PCSX2HOOK_API size_t pcsx2hook_read_gs_pixels(pcsx2hook_ctx* ctx, uint32_t tbp0, uint32_t tbw,
+	uint32_t psm, uint32_t width, uint32_t height, uint32_t* out, size_t count);
+
+/**
  * @brief Opens a draw context that traced work is attributed to. Pair with ::pcsx2hook_pop_draw.
  * @note @p label keeps 31 characters. Work the guest kicks after the pop is unattributed.
  */
@@ -274,6 +304,13 @@ PCSX2HOOK_API size_t pcsx2hook_resolve_symbol(pcsx2hook_ctx* ctx, uint32_t pc, c
 
 /** @brief Whether @p pc lies inside the program's own text, as opposed to the BIOS or a module. */
 PCSX2HOOK_API int pcsx2hook_is_in_code_range(pcsx2hook_ctx* ctx, uint32_t pc);
+
+/**
+ * @brief The address of a named symbol, for hooking by name rather than by a hardcoded address.
+ * @return 0 when no map is loaded or it does not name @p name, which a caller must treat as "do not
+ *         hook" rather than as an address.
+ */
+PCSX2HOOK_API uint32_t pcsx2hook_find_symbol(pcsx2hook_ctx* ctx, const char* name);
 
 /** @brief Loads the symbol map now rather than on first use. */
 PCSX2HOOK_API void pcsx2hook_load_symbols(pcsx2hook_ctx* ctx);
@@ -312,6 +349,105 @@ PCSX2HOOK_API size_t pcsx2hook_get_gs_rows(pcsx2hook_ctx* ctx, uint32_t frame, c
 
 /** @brief Appends the last complete frame's rows to @p path. @return Rows written. */
 PCSX2HOOK_API size_t pcsx2hook_write_gs_last_frame(pcsx2hook_ctx* ctx, const char* path);
+
+/** @} */
+
+/**
+ * @defgroup gs_software The software rasteriser on its own
+ * @brief PCSX2's software GS, driven by a host that owns the graphics interface itself.
+ *
+ * No context: these do not boot or run a machine, they only rasterise what is handed to them, so a
+ * host emulating its own PS2 can see what its graphics stream draws. There is no device behind the
+ * renderer, which is why the picture comes back as pixels rather than being presented.
+ * @code
+ * pcsx2hook_gs_open(registers, PCSX2HOOK_GS_SOFTWARE, NULL, NULL, 0);
+ * ... pcsx2hook_gs_transfer(path, data, bytes) as the interface hands packets over ...
+ * pcsx2hook_gs_end_field(field);
+ * pcsx2hook_gs_read_display(pixels, capacity, &width, &height);
+ * @endcode
+ * @{
+ */
+
+/** @brief Which renderer to draw with. Anything but ::PCSX2HOOK_GS_SOFTWARE needs a window. */
+typedef enum
+{
+	PCSX2HOOK_GS_SOFTWARE = 0,
+	PCSX2HOOK_GS_AUTO,     /**< Whatever the platform prefers. */
+	PCSX2HOOK_GS_OPENGL,
+	PCSX2HOOK_GS_VULKAN,
+	PCSX2HOOK_GS_D3D11,
+	PCSX2HOOK_GS_D3D12,
+	PCSX2HOOK_GS_METAL,
+} pcsx2hook_gs_renderer;
+
+/** @brief What each field of ::pcsx2hook_window means. */
+typedef enum
+{
+	PCSX2HOOK_WINDOW_NONE = 0, /**< Nothing is shown; the host reads the picture instead. */
+	PCSX2HOOK_WINDOW_WIN32,    /**< @c handle is the HWND. */
+	PCSX2HOOK_WINDOW_X11,      /**< @c display is the Display*, @c handle the window id. */
+	PCSX2HOOK_WINDOW_WAYLAND,  /**< @c display is the wl_display*, @c handle the wl_surface*. */
+	PCSX2HOOK_WINDOW_MACOS,    /**< @c handle is the NSView*, not the window. */
+} pcsx2hook_window_type;
+
+/** @brief A window the host owns and lends to the renderer. */
+typedef struct
+{
+	int type; /**< One of ::pcsx2hook_window_type. */
+	void* display;
+	void* handle;
+	uint32_t width;
+	uint32_t height;
+	float scale; /**< Pixels per point, 1.0 where the display is not scaled. */
+} pcsx2hook_window;
+
+/**
+ * @brief Opens a renderer.
+ * @param privileged_registers The 8192 byte register window, read as the renderer draws, so it
+ *        must outlive the renderer and hold what the guest wrote.
+ * @param renderer One of ::pcsx2hook_gs_renderer.
+ * @param window The window to draw into, or NULL for none. Without one only the software renderer
+ *        can be opened, and the picture comes back through ::pcsx2hook_gs_read_display.
+ * @param resources PCSX2's resources directory, which a hardware renderer reads its shaders from.
+ *        NULL looks for it beside the program, which is where a host that loaded this library is,
+ *        not where the library came from.
+ * @param threads Extra rasteriser threads for the software renderer; 0 draws on the calling thread.
+ * @return Non-zero on success.
+ * @note Call this, and everything else here, from one thread: a graphics device belongs to the
+ *       thread that made it.
+ */
+PCSX2HOOK_API int pcsx2hook_gs_open(uint8_t* privileged_registers, int renderer,
+	const pcsx2hook_window* window, const char* resources, int threads);
+
+/** @brief Says the window changed size. Ignored when there is no window. */
+PCSX2HOOK_API void pcsx2hook_gs_resize(uint32_t width, uint32_t height, float scale);
+
+/** @brief Closes it, freeing local memory. */
+PCSX2HOOK_API void pcsx2hook_gs_close(void);
+
+/** @brief One burst of a graphics packet, down path 1, 2 or 3. */
+PCSX2HOOK_API void pcsx2hook_gs_transfer(int path, const uint8_t* data, uint32_t bytes);
+
+/** @brief Draws everything pending. @param field 0 or 1, as the interface reports it. */
+PCSX2HOOK_API void pcsx2hook_gs_end_field(int field);
+
+/**
+ * @brief The displayed frame buffer, as 32 bit pixels.
+ * @return Non-zero when a frame was written, zero when the registers point at nothing or the
+ *         buffer is too small for it.
+ */
+PCSX2HOOK_API int pcsx2hook_gs_read_display(uint32_t* pixels, int capacity, int* width,
+	int* height);
+
+/** @brief The same frame, written as a PNG. @return Non-zero on success. */
+PCSX2HOOK_API int pcsx2hook_gs_write_display(const char* path);
+
+/**
+ * @brief The frame as the renderer would show it, which is the only way to see one a hardware
+ *        renderer drew: it keeps the picture on the graphics card rather than in local memory.
+ * @return Non-zero when a frame was written.
+ */
+PCSX2HOOK_API int pcsx2hook_gs_snapshot(uint32_t* pixels, int capacity, int* width, int* height);
 
 /** @} */
 
