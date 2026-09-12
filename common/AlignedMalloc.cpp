@@ -16,7 +16,8 @@ void* _aligned_malloc(size_t size, size_t align)
 {
 	pxAssert(align < 0x10000);
 #if defined(__USE_ISOC11) && !defined(ASAN_WORKAROUND) // not supported yet on gcc 4.9
-	return aligned_alloc(align, size);
+	// C11 wants the size a multiple of the alignment; glibc lets it slide, AddressSanitizer does not.
+	return aligned_alloc(align, (size + align - 1) & ~(align - 1));
 #else
 #ifdef __APPLE__
 	// MacOS has a bug where posix_memalign is ridiculously slow on unaligned sizes
