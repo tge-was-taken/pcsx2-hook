@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: 2002-2026 PCSX2 Dev Team
 // SPDX-License-Identifier: GPL-3.0+
 
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 
 #include <atomic>
 #include <chrono>
@@ -878,10 +880,6 @@ void GSRunner::DumpStats() {
     Console.WriteLn("============================================");
 }
 
-#ifdef _WIN32
-#define main real_main
-#endif
-
 static void CPUThreadMain(VMBootParameters* params, std::atomic<int>* ret) {
     ret->store(EXIT_FAILURE);
 
@@ -896,7 +894,9 @@ static void CPUThreadMain(VMBootParameters* params, std::atomic<int>* ret) {
 }
 
 namespace {
+// The copy goes through a POSIX pipe, so a Windows run logs to its console only.
 void SetupFileLog() {
+#ifndef _WIN32
     std::error_code ec;
     std::filesystem::create_directories("experiments/logs", ec);
     const std::time_t t = std::time(nullptr);
@@ -926,6 +926,7 @@ void SetupFileLog() {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
     std::setvbuf(stderr, nullptr, _IONBF, 0);
     std::fprintf(stderr, "[LOG] logging this run to %s\n", path.c_str());
+#endif
 }
 }  // namespace
 
@@ -1092,6 +1093,7 @@ static constexpr int kShutdownMsg = WM_APP + 0x100;
 static DWORD MainThreadID;
 
 void GSRunner::PumpPlatformMessages(bool forever) {
+    MainThreadID = GetCurrentThreadId();
     MSG msg;
     while (true) {
         while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) {
@@ -1104,27 +1106,19 @@ void GSRunner::PumpPlatformMessages(bool forever) {
     }
 }
 
+static std::atomic<bool> s_shutdown_requested{false};
+
 void GSRunner::StopPlatformMessagePump() {
+    s_shutdown_requested.store(true);
     PostThreadMessageW(MainThreadID, kShutdownMsg, 0, 0);
+}
+
+bool GSRunner::IsShutdownRequested() {
+    return s_shutdown_requested.load();
 }
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     return DefWindowProcW(hwnd, msg, wParam, lParam);
-}
-
-int wmain(int argc, wchar_t** argv) {
-    std::vector<std::string> u8_args;
-    u8_args.reserve(static_cast<size_t>(argc));
-    for (int i = 0; i < argc; i++) u8_args.push_back(StringUtil::WideStringToUTF8String(argv[i]));
-
-    std::vector<char*> u8_argptrs;
-    u8_argptrs.reserve(u8_args.size());
-    for (int i = 0; i < argc; i++) u8_argptrs.push_back(u8_args[i].data());
-    u8_argptrs.push_back(nullptr);
-
-    MainThreadID = GetCurrentThreadId();
-
-    return real_main(argc, u8_argptrs.data());
 }
 
 #elif defined(__APPLE__)

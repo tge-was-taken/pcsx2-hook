@@ -33,7 +33,9 @@ set_target_properties(pcsx2hook PROPERTIES
 
 target_compile_definitions(pcsx2hook PRIVATE PCSX2HOOK_BUILDING)
 
-target_link_options(pcsx2hook PRIVATE -Wl,--no-undefined)
+if(NOT WIN32)
+	target_link_options(pcsx2hook PRIVATE -Wl,--no-undefined)
+endif()
 
 target_link_libraries(pcsx2hook PRIVATE PCSX2_FLAGS PCSX2)
 
