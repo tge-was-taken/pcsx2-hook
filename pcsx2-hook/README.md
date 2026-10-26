@@ -69,6 +69,19 @@ A script line is `FRAME BUTTON [HOLD]`, `#` starts a comment, and `--help` lists
 names. Nothing reads the schedule but the pad, so getting somewhere is a matter of what the
 program does with the input, not of the host knowing anything about it.
 
+Input only reaches what the program chooses to do. `--arg ADDR:REG:V1,V2,...` and `--arg-file
+ADDR:REG:FILE` cover the rest, feeding a register a different value at each call of one
+function, so whatever call the program makes on its own becomes the next case:
+
+```sh
+pcsx2hook_cli --bios bios.bin --frames 40000 --trace spu \
+    --arg-file 0x002C1670:4:every-track.txt disc.iso
+```
+
+The register is a number, 4 for `$a0`, and the substitution happens at entry, so the function
+still runs on the program's own thread. That matters for a target that blocks or waits on
+hardware, which `pcsx2hook_call_ee` cannot drive because it masks EE interrupts.
+
 ## What the fork adds
 
 - **An EE hook registry.** A handler runs at a guest function's entry with the live register file,

@@ -126,6 +126,130 @@ static int readScript(const char* path)
 	return 1;
 }
 
+/* A register fed a different value at each call of one function.
+ *
+ * A program decides for itself what it asks for, which is a problem for a
+ * trace meant to cover everything it can ask for. Substituting the argument
+ * at entry turns whatever call the program makes on its own into the next
+ * case, and the call still runs on the program's own thread, so a target that
+ * blocks or waits for hardware behaves as it always does. */
+typedef struct
+{
+	uint32_t addr;
+	int reg;
+	int count;
+	int next;
+	uint32_t values[512];
+} argFeed;
+
+enum
+{
+	kMaxFeeds = 8
+};
+
+static argFeed s_feeds[kMaxFeeds];
+static int s_feedCount;
+
+static int feedPre(pcsx2hook_regs* regs, void* user)
+{
+	argFeed* f = (argFeed*)user;
+
+	regs->gpr[f->reg * 4] = f->values[f->next];
+	f->next = (f->next + 1) % f->count;
+	return PCSX2HOOK_CONTINUE;
+}
+
+static int parseFeed(const char* text)
+{
+	argFeed* f;
+	const char* p;
+	char* end;
+
+	if (s_feedCount == kMaxFeeds)
+		return 0;
+	f = &s_feeds[s_feedCount];
+	memset(f, 0, sizeof(*f));
+	f->addr = (uint32_t)strtoul(text, &end, 0);
+	if (*end != ':')
+		return 0;
+	f->reg = (int)strtol(end + 1, &end, 0);
+	if (*end != ':' || f->reg < 0 || f->reg > 31)
+		return 0;
+	for (p = end + 1; *p && f->count < (int)(sizeof(f->values) / sizeof(f->values[0])); )
+	{
+		f->values[f->count++] = (uint32_t)strtoul(p, &end, 0);
+		if (end == p)
+			return 0;
+		p = *end == ',' ? end + 1 : end;
+		if (*end && *end != ',')
+			return 0;
+	}
+	if (!f->count)
+		return 0;
+	s_feedCount++;
+	return 1;
+}
+
+static int readList(const char* path, char* out, size_t n)
+{
+	size_t used = 0;
+	char line[512];
+	FILE* f = fopen(path, "r");
+
+	if (!f)
+	{
+		fprintf(stderr, "cannot read %s\n", path);
+		return 0;
+	}
+	while (fgets(line, sizeof(line), f))
+	{
+		char* hash = strchr(line, '#');
+		char* tok;
+		/* A line too long for the buffer arrives in pieces, and a piece after
+		 * the first carries no '#', so the tail of a comment would be read as
+		 * values. Drop whatever did not fit. */
+		const int whole = strchr(line, '\n') != NULL;
+
+		if (hash)
+			*hash = '\0';
+		for (tok = strtok(line, " \t\r\n,"); tok; tok = strtok(NULL, " \t\r\n,"))
+		{
+			const size_t len = strlen(tok);
+
+			if (used + len + 2 >= n)
+			{
+				fclose(f);
+				fprintf(stderr, "%s has too many values\n", path);
+				return 0;
+			}
+			if (used)
+				out[used++] = ',';
+			memcpy(out + used, tok, len);
+			used += len;
+		}
+		if (!whole)
+		{
+			int c;
+
+			while ((c = fgetc(f)) != '\n' && c != EOF)
+				;
+		}
+	}
+	out[used] = '\0';
+	fclose(f);
+	return used != 0;
+}
+
+static void onVmReady(void* user)
+{
+	(void)user;
+	for (int i = 0; i < s_feedCount; i++)
+	{
+		if (!pcsx2hook_add_hook(s_ctx, s_feeds[i].addr, feedPre, NULL, &s_feeds[i]))
+			fprintf(stderr, "cannot hook %08X\n", s_feeds[i].addr);
+	}
+}
+
 static void onFrame(uint32_t frame, void* user)
 {
 	(void)user;
@@ -154,6 +278,9 @@ static void usage(FILE* f)
 		"  --set NAME=VALUE    any other library setting, by its PCSX2HOOK_ variable name\n"
 		"  --press F:BUTTON[:N]  press BUTTON at frame F for N frames; repeat for more\n"
 		"  --script FILE       the same as lines of \"FRAME BUTTON [HOLD]\", # comments\n"
+		"  --arg ADDR:REG:LIST   feed register REG a different value from LIST at each\n"
+		"                      call of the function at ADDR, cycling\n"
+		"  --arg-file ADDR:REG:FILE  the same, with the values read from FILE\n"
 		"\n"
 		"traces:");
 	for (int i = 0; i < kTraceCount; i++)
@@ -264,6 +391,36 @@ int main(int argc, char** argv)
 			}
 			sets[setCount++] = argv[++i];
 		}
+		else if (strcmp(a, "--arg") == 0)
+		{
+			if (!v || !parseFeed(v))
+			{
+				fprintf(stderr, "--arg takes ADDR:REG:V1[,V2...]\n");
+				return 2;
+			}
+			i++;
+		}
+		else if (strcmp(a, "--arg-file") == 0)
+		{
+			static char spec[8][8192];
+			char list[7000];
+			const char* colon = v ? strchr(v, ':') : NULL;
+			const char* second = colon ? strchr(colon + 1, ':') : NULL;
+
+			if (!second || s_feedCount >= kMaxFeeds || !readList(second + 1, list, sizeof(list)))
+			{
+				fprintf(stderr, "--arg-file takes ADDR:REG:FILE\n");
+				return 2;
+			}
+			snprintf(spec[s_feedCount], sizeof(spec[0]), "%.*s%s",
+				(int)(second + 1 - v), v, list);
+			if (!parseFeed(spec[s_feedCount]))
+			{
+				fprintf(stderr, "--arg-file: bad address, register or values\n");
+				return 2;
+			}
+			i++;
+		}
 		else if (strcmp(a, "--press") == 0)
 		{
 			if (!v || !parsePress(v))
@@ -303,6 +460,8 @@ int main(int argc, char** argv)
 	cfg.software_gs = softwareGs;
 	if (s_pressCount)
 		cfg.on_frame = onFrame;
+	if (s_feedCount)
+		cfg.on_vm_ready = onVmReady;
 	pcsx2hook_ctx* ctx = pcsx2hook_create(&cfg);
 	if (!ctx)
 		return 1;
