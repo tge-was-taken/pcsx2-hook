@@ -199,6 +199,10 @@ void pcsx2hook_set_boot_state(pcsx2hook_ctx* ctx, const char* path) {
     if (ctx) setOrUnset("PCSX2HOOK_STATE", path && *path, path);
 }
 
+void pcsx2hook_set_boot_elf(pcsx2hook_ctx* ctx, const char* path) {
+    if (ctx) setOrUnset("PCSX2HOOK_ELF", path && *path, path);
+}
+
 void pcsx2hook_set_frame_limit(pcsx2hook_ctx* ctx, uint32_t frames) {
     if (ctx) setOrUnset("PCSX2HOOK_FRAMES", frames != 0, std::to_string(frames).c_str());
 }

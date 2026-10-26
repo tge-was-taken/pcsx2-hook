@@ -952,6 +952,16 @@ bool pcsx2hook::Pcsx2Host::init(int argc, char** argv) {
         s_bootParams.save_state = state;
         Console.WriteLn(fmt::format("[pcsx2hook] booting into savestate {}", state));
     }
+    /* Boots this executable with the disc still mounted, which is how a build
+     * of a program runs against the data it shipped with. */
+    if (const char* elf = pcsx2hook::Config::get().getValue("PCSX2HOOK_ELF")) {
+        if (!FileSystem::FileExists(elf)) {
+            Console.Error(fmt::format("[pcsx2hook] PCSX2HOOK_ELF not found: {}", elf));
+            return false;
+        }
+        s_bootParams.elf_override = elf;
+        Console.WriteLn(fmt::format("[pcsx2hook] booting ELF {}", elf));
+    }
     return true;
 }
 

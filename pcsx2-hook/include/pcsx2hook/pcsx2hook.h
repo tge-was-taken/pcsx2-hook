@@ -236,6 +236,9 @@ PCSX2HOOK_API uint32_t pcsx2hook_get_ee_pc(pcsx2hook_ctx* ctx);
 /** @brief The disc serial, such as @c "SLUS-21621". Empty before boot, owned by the context. */
 PCSX2HOOK_API const char* pcsx2hook_get_disc_serial(pcsx2hook_ctx* ctx);
 
+/** @brief Boots this ELF instead of the disc's own, with the disc still mounted. */
+PCSX2HOOK_API void pcsx2hook_set_boot_elf(pcsx2hook_ctx* ctx, const char* path);
+
 /** @brief Loads a savestate. @return Non-zero on success; see ::pcsx2hook_get_last_error. */
 PCSX2HOOK_API int pcsx2hook_load_state(pcsx2hook_ctx* ctx, const char* path);
 

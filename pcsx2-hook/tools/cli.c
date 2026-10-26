@@ -304,6 +304,7 @@ static void usage(FILE* f)
 		"usage: pcsx2hook_cli --bios FILE [options] DISC\n"
 		"\n"
 		"  --state FILE        boot into a savestate instead of the disc's start\n"
+		"  --elf FILE          boot this ELF, with the disc still mounted\n"
 		"  --frames N          stop after N frames and write the traces (default 60)\n"
 		"  --out DIR           where the traces are written (default pcsx2hook_out)\n"
 		"  --symbols PATH      symbol map, or a directory holding <ELF>.map files\n"
@@ -354,6 +355,7 @@ int main(int argc, char** argv)
 {
 	const char* bios = NULL;
 	const char* state = NULL;
+	const char* elf = NULL;
 	const char* out = "pcsx2hook_out";
 	const char* symbols = NULL;
 	const char* disc = NULL;
@@ -458,6 +460,15 @@ int main(int argc, char** argv)
 			}
 			i++;
 		}
+		else if (strcmp(a, "--elf") == 0)
+		{
+			if (!v)
+			{
+				fprintf(stderr, "--elf takes a path\n");
+				return 2;
+			}
+			elf = argv[++i];
+		}
 		else if (strcmp(a, "--watch") == 0)
 		{
 			if (!v || !parseWatch(v))
@@ -526,6 +537,7 @@ int main(int argc, char** argv)
 	pcsx2hook_set_interpreter(ctx, cpus);
 	pcsx2hook_set_accurate_timing(ctx, accurate);
 	pcsx2hook_set_boot_state(ctx, state);
+	pcsx2hook_set_boot_elf(ctx, elf);
 	pcsx2hook_set_frame_limit(ctx, (uint32_t)frames);
 	for (int t = 0; t < kTraceCount; t++)
 	{

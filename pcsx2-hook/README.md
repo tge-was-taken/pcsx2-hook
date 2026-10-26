@@ -86,6 +86,11 @@ Both report how many times each hook fired when the run ends, because a substitu
 fires looks exactly like one that worked. `--watch ADDR` counts without substituting, which is
 how to find out whether a function is called at all before deciding to feed it.
 
+`--elf FILE` boots an executable of your own with the disc still mounted, which is how a build of
+a program runs against the data it shipped with. Note that a decompilation's link product is not
+usually the bootable file: the one to pass is whatever reproduces the original executable, headers
+and entry point included.
+
 ## What the fork adds
 
 - **An EE hook registry.** A handler runs at a guest function's entry with the live register file,
