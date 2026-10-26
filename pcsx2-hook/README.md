@@ -57,6 +57,18 @@ pcsx2hook_cli --bios bios.bin --state scene.p2s --frames 30 --out traces \
 `--help` lists every trace. `--set NAME=VALUE` reaches any other setting by the variable name the
 tables below use. Traces are written when the run stops, so let `--frames` end it.
 
+A trace about anything past a title screen needs the program driven there, which `--press
+FRAME:BUTTON[:HOLD]` and `--script FILE` do on a schedule rather than by hand, so the run repeats:
+
+```sh
+pcsx2hook_cli --bios bios.bin --frames 40000 --out traces --trace spu \
+    --script skip-to-gameplay.txt disc.iso
+```
+
+A script line is `FRAME BUTTON [HOLD]`, `#` starts a comment, and `--help` lists the button
+names. Nothing reads the schedule but the pad, so getting somewhere is a matter of what the
+program does with the input, not of the host knowing anything about it.
+
 ## What the fork adds
 
 - **An EE hook registry.** A handler runs at a guest function's entry with the live register file,

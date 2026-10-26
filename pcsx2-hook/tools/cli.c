@@ -31,6 +31,113 @@ enum
 	kTraceCount = sizeof(kTraces) / sizeof(kTraces[0])
 };
 
+static const char* const kButtons[PCSX2HOOK_PAD_COUNT] = {
+	"up", "right", "down", "left",
+	"triangle", "circle", "cross", "square",
+	"select", "start",
+	"l1", "l2", "r1", "r2", "l3", "r3",
+	"analog", "pressure",
+	"lup", "lright", "ldown", "lleft",
+	"rup", "rright", "rdown", "rleft",
+};
+
+/* A scheduled button press: held from one frame for a number of frames. A
+ * program that waits for input needs driving to reach the state a trace is
+ * about, and a schedule keeps that reproducible where a human cannot. */
+typedef struct
+{
+	unsigned frame;
+	unsigned hold;
+	int button;
+} press;
+
+enum
+{
+	kMaxPresses = 1024,
+	kDefaultHold = 6
+};
+
+static press s_presses[kMaxPresses];
+static int s_pressCount;
+static pcsx2hook_ctx* s_ctx;
+
+static int parsePress(const char* text)
+{
+	char name[32];
+	unsigned frame, hold = kDefaultHold;
+	int n = 0;
+
+	if (s_pressCount == kMaxPresses)
+		return 0;
+	if (sscanf(text, "%u:%31[^:]:%u%n", &frame, name, &hold, &n) < 3)
+	{
+		hold = kDefaultHold;
+		if (sscanf(text, "%u:%31[^:]%n", &frame, name, &n) < 2)
+			return 0;
+	}
+	if (text[n] != '\0')
+		return 0;
+	for (int b = 0; b < PCSX2HOOK_PAD_COUNT; b++)
+	{
+		if (strcmp(kButtons[b], name) != 0)
+			continue;
+		s_presses[s_pressCount].frame = frame;
+		s_presses[s_pressCount].hold = hold ? hold : 1;
+		s_presses[s_pressCount].button = b;
+		s_pressCount++;
+		return 1;
+	}
+	fprintf(stderr, "unknown button '%s'\n", name);
+	return 0;
+}
+
+static int readScript(const char* path)
+{
+	char line[128];
+	FILE* f = fopen(path, "r");
+
+	if (!f)
+	{
+		fprintf(stderr, "cannot read %s\n", path);
+		return 0;
+	}
+	while (fgets(line, sizeof(line), f))
+	{
+		char token[96];
+		unsigned frame, hold;
+		char name[32];
+		char* hash = strchr(line, '#');
+
+		if (hash)
+			*hash = '\0';
+		if (sscanf(line, "%u %31s %u", &frame, name, &hold) == 3)
+			snprintf(token, sizeof(token), "%u:%s:%u", frame, name, hold);
+		else if (sscanf(line, "%u %31s", &frame, name) == 2)
+			snprintf(token, sizeof(token), "%u:%s", frame, name);
+		else
+			continue;
+		if (!parsePress(token))
+		{
+			fclose(f);
+			return 0;
+		}
+	}
+	fclose(f);
+	return 1;
+}
+
+static void onFrame(uint32_t frame, void* user)
+{
+	(void)user;
+	for (int i = 0; i < s_pressCount; i++)
+	{
+		if (frame == s_presses[i].frame)
+			pcsx2hook_set_pad_button(s_ctx, s_presses[i].button, 1);
+		else if (frame == s_presses[i].frame + s_presses[i].hold)
+			pcsx2hook_set_pad_button(s_ctx, s_presses[i].button, 0);
+	}
+}
+
 static void usage(FILE* f)
 {
 	fprintf(f,
@@ -45,6 +152,8 @@ static void usage(FILE* f)
 		"  --accurate-timing   turn off Instant VU1 and the idle-loop and INTC_STAT skips\n"
 		"  --software-gs       rasterize with the software GS instead of the null renderer\n"
 		"  --set NAME=VALUE    any other library setting, by its PCSX2HOOK_ variable name\n"
+		"  --press F:BUTTON[:N]  press BUTTON at frame F for N frames; repeat for more\n"
+		"  --script FILE       the same as lines of \"FRAME BUTTON [HOLD]\", # comments\n"
 		"\n"
 		"traces:");
 	for (int i = 0; i < kTraceCount; i++)
@@ -155,6 +264,21 @@ int main(int argc, char** argv)
 			}
 			sets[setCount++] = argv[++i];
 		}
+		else if (strcmp(a, "--press") == 0)
+		{
+			if (!v || !parsePress(v))
+			{
+				fprintf(stderr, "--press takes FRAME:BUTTON[:HOLD]\n");
+				return 2;
+			}
+			i++;
+		}
+		else if (strcmp(a, "--script") == 0)
+		{
+			if (!v || !readScript(v))
+				return 2;
+			i++;
+		}
 		else if (a[0] == '-')
 		{
 			fprintf(stderr, "unknown option %s\n", a);
@@ -177,9 +301,12 @@ int main(int argc, char** argv)
 	cfg.symbols = symbols;
 	cfg.surfaceless = 1;
 	cfg.software_gs = softwareGs;
+	if (s_pressCount)
+		cfg.on_frame = onFrame;
 	pcsx2hook_ctx* ctx = pcsx2hook_create(&cfg);
 	if (!ctx)
 		return 1;
+	s_ctx = ctx;
 
 	for (int i = 0; i < setCount; i++)
 	{
