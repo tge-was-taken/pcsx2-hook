@@ -139,6 +139,7 @@ typedef struct
 	int reg;
 	int count;
 	int next;
+	unsigned hits;
 	uint32_t values[512];
 } argFeed;
 
@@ -154,8 +155,12 @@ static int feedPre(pcsx2hook_regs* regs, void* user)
 {
 	argFeed* f = (argFeed*)user;
 
-	regs->gpr[f->reg * 4] = f->values[f->next];
-	f->next = (f->next + 1) % f->count;
+	f->hits++;
+	if (f->count)
+	{
+		regs->gpr[f->reg * 4] = f->values[f->next];
+		f->next = (f->next + 1) % f->count;
+	}
 	return PCSX2HOOK_CONTINUE;
 }
 
@@ -185,6 +190,22 @@ static int parseFeed(const char* text)
 			return 0;
 	}
 	if (!f->count)
+		return 0;
+	s_feedCount++;
+	return 1;
+}
+
+static int parseWatch(const char* text)
+{
+	argFeed* f;
+	char* end;
+
+	if (s_feedCount == kMaxFeeds)
+		return 0;
+	f = &s_feeds[s_feedCount];
+	memset(f, 0, sizeof(*f));
+	f->addr = (uint32_t)strtoul(text, &end, 0);
+	if (*end != '\0' || !f->addr)
 		return 0;
 	s_feedCount++;
 	return 1;
@@ -250,6 +271,21 @@ static void onVmReady(void* user)
 	}
 }
 
+/* Report what each hook saw. A substitution that never fires looks exactly
+ * like one that worked, and reading the result of a run that did nothing is
+ * worse than reading no result. */
+static void onShutdown(void* user)
+{
+	(void)user;
+	for (int i = 0; i < s_feedCount; i++)
+	{
+		fprintf(stderr, "[arg] %08X called %u times", s_feeds[i].addr, s_feeds[i].hits);
+		if (s_feeds[i].count)
+			fprintf(stderr, ", fed $%d from %d values", s_feeds[i].reg, s_feeds[i].count);
+		fprintf(stderr, "\n");
+	}
+}
+
 static void onFrame(uint32_t frame, void* user)
 {
 	(void)user;
@@ -281,6 +317,7 @@ static void usage(FILE* f)
 		"  --arg ADDR:REG:LIST   feed register REG a different value from LIST at each\n"
 		"                      call of the function at ADDR, cycling\n"
 		"  --arg-file ADDR:REG:FILE  the same, with the values read from FILE\n"
+		"  --watch ADDR        only count calls of the function at ADDR\n"
 		"\n"
 		"traces:");
 	for (int i = 0; i < kTraceCount; i++)
@@ -421,6 +458,15 @@ int main(int argc, char** argv)
 			}
 			i++;
 		}
+		else if (strcmp(a, "--watch") == 0)
+		{
+			if (!v || !parseWatch(v))
+			{
+				fprintf(stderr, "--watch takes ADDR\n");
+				return 2;
+			}
+			i++;
+		}
 		else if (strcmp(a, "--press") == 0)
 		{
 			if (!v || !parsePress(v))
@@ -461,7 +507,10 @@ int main(int argc, char** argv)
 	if (s_pressCount)
 		cfg.on_frame = onFrame;
 	if (s_feedCount)
+	{
 		cfg.on_vm_ready = onVmReady;
+		cfg.on_shutdown = onShutdown;
+	}
 	pcsx2hook_ctx* ctx = pcsx2hook_create(&cfg);
 	if (!ctx)
 		return 1;

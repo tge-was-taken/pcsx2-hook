@@ -82,6 +82,10 @@ The register is a number, 4 for `$a0`, and the substitution happens at entry, so
 still runs on the program's own thread. That matters for a target that blocks or waits on
 hardware, which `pcsx2hook_call_ee` cannot drive because it masks EE interrupts.
 
+Both report how many times each hook fired when the run ends, because a substitution that never
+fires looks exactly like one that worked. `--watch ADDR` counts without substituting, which is
+how to find out whether a function is called at all before deciding to feed it.
+
 ## What the fork adds
 
 - **An EE hook registry.** A handler runs at a guest function's entry with the live register file,
