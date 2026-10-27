@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "SPU2/defs.h"
+#include "pcsx2/Hooks.h"
 
 namespace pcsx2hook {
 
@@ -29,6 +30,7 @@ public:
     void onAdpcm(const uint8_t* block, int32_t prev1In, int32_t prev2In, const int16_t* samples,
                  int32_t prev1Out, int32_t prev2Out);
     void onVoice(uint32_t core, uint32_t voice, uint32_t stage, int32_t outL, int32_t outR);
+    void onReverb(const Hooks::SpuReverbCase& c);
     void onRegWrite(uint32_t addr, uint16_t value, bool after);
     void onRegRead(uint32_t addr, uint16_t value);
     void write();
@@ -53,6 +55,7 @@ private:
     Unit mVolume{"spu_volume_vectors.jsonl", 128, {}, {}, {}};
     Unit mVoice{"spu_voice_vectors.jsonl", 512, {}, {}, {}};
     Unit mReg{"spu_reg_vectors.jsonl", 64, {}, {}, {}};
+    Unit mReverb{"spu_reverb_vectors.jsonl", 256, {}, {}, {}};
 
     std::vector<size_t> mAdsrFormCases, mVolumeFormCases, mVoiceFormCases;
     VoiceStep mSteps[2][24];
@@ -61,11 +64,13 @@ private:
     std::vector<int64_t> mRegBefore;
     bool mRegPending = false;
     uint64_t mVoiceSamples = 0, mRegWrites = 0, mRegReads = 0, mAdpcmBlocks = 0;
+    uint64_t mReverbCycles = 0;
 };
 
 void spuAdpcmSink(const uint8_t* block, int32_t prev1In, int32_t prev2In, const int16_t* samples,
                   int32_t prev1Out, int32_t prev2Out);
 void spuVoiceSink(uint32_t core, uint32_t voice, uint32_t stage, int32_t outL, int32_t outR);
+void spuReverbSink(const Hooks::SpuReverbCase& c);
 void spuRegWriteSink(uint32_t addr, uint16_t value, bool after);
 void spuRegReadSink(uint32_t addr, uint16_t value);
 

@@ -113,10 +113,17 @@ Reference vectors for three more units, each a `pcsx2hook_trace` value (`--trace
 |---|---|---|
 | `PCSX2HOOK_VU_INSN_TRACE` | `vu0_vectors.jsonl`, `vu1_vectors.jsonl` | one micro-mode instruction pair, with the delay pipelines either side (needs `PCSX2HOOK_VU0_INTERP=1` or `PCSX2HOOK_VU1_INTERP=1` for that unit) |
 | `PCSX2HOOK_VIF_CMD_TRACE` | `vif_vectors.jsonl` | one VIFcode on VIF0 or VIF1, with its payload and the VU memory it wrote |
-| `PCSX2HOOK_SPU_TRACE` | `spu_*_vectors.jsonl` | an ADPCM block, an envelope step, a volume slide step, one voice sample, or a register access |
+| `PCSX2HOOK_SPU_TRACE` | `spu_*_vectors.jsonl` | an ADPCM block, an envelope step, a volume slide step, one voice sample, a register access, or one reverb cycle |
 
 `scripts/hw_vectors_merge.py` unions them across runs, and `scripts/hw_vectors_check.py` checks
 them against models that do not come from the emulator's code.
+
+`spu_reverb_vectors.jsonl` is one cycle of the reverb network per row, and it is recorded as a
+closed case: the ten words it read with their addresses, the nine coefficients, the downsampled
+input, and the four words it wrote plus the sample it returned. That is deliberate. The work area
+is up to 64KB per core, so recording state rather than taps would make a row unusable; with just
+the taps a reader can replay a cycle with no work area and no address arithmetic, which is what
+makes the filter checkable at all.
 
 `PCSX2HOOK_TIMING_TRACE` (`--trace timing`) records what those isolated cases cannot show, order and
 cycle, and wants accurate timing (Instant VU1, WaitLoop and IntcStat off) plus both VU interpreters.

@@ -3,6 +3,9 @@
 
 #include "SPU2/defs.h"
 #include "GS/GSVector.h"
+#ifdef PCSX2HOOK
+#include "pcsx2/Hooks.h"
+#endif
 
 #include "common/Console.h"
 
@@ -126,7 +129,8 @@ StereoOut32 V_Core::DoReverb(StereoOut32 Input)
 	s32 in, same, diff, apf1, apf2, out;
 
 #define MUL(x, y) ((x) * (y) >> 15)
-	in = MUL(R ? Revb.IN_COEF_R : Revb.IN_COEF_L, ReverbDownsample(*this, R));
+	const s32 downsampled = ReverbDownsample(*this, R);
+	in = MUL(R ? Revb.IN_COEF_R : Revb.IN_COEF_L, downsampled);
 
 	same = MUL(Revb.IIR_VOL, in + MUL(Revb.WALL_VOL, _spu2mem[same_src]) - _spu2mem[same_prv]) + _spu2mem[same_prv];
 	diff = MUL(Revb.IIR_VOL, in + MUL(Revb.WALL_VOL, _spu2mem[diff_src]) - _spu2mem[diff_prv]) + _spu2mem[diff_prv];
@@ -148,6 +152,34 @@ StereoOut32 V_Core::DoReverb(StereoOut32 Input)
 	}
 
 	out = clamp_mix(out);
+
+#ifdef PCSX2HOOK
+	if (Hooks::HasSpuReverbSink())
+	{
+		Hooks::SpuReverbCase c;
+		const u32 addrs[10] = {same_src, same_prv, diff_src, diff_prv, comb1_src,
+			comb2_src, comb3_src, comb4_src, apf1_src, apf2_src};
+		const s32 coefs[10] = {R ? Revb.IN_COEF_R : Revb.IN_COEF_L, Revb.IIR_VOL,
+			Revb.WALL_VOL, Revb.COMB1_VOL, Revb.COMB2_VOL, Revb.COMB3_VOL,
+			Revb.COMB4_VOL, Revb.APF1_VOL, Revb.APF2_VOL, 0};
+		c.core = Index;
+		c.right = R;
+		c.fxEnable = FxEnable;
+		for (int i = 0; i < 10; i++)
+		{
+			c.addr[i] = addrs[i];
+			c.mem[i] = _spu2mem[addrs[i]];
+			c.coef[i] = coefs[i];
+		}
+		c.in = downsampled;
+		c.same = clamp_mix(same);
+		c.diff = clamp_mix(diff);
+		c.apf1 = clamp_mix(apf1);
+		c.apf2 = clamp_mix(apf2);
+		c.out = out;
+		Hooks::OnSpuReverb(c);
+	}
+#endif
 
 	RevbUpBuf[R][RevbSampleBufPos] = out;
 	RevbUpBuf[!R][RevbSampleBufPos] = 0;

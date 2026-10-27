@@ -189,6 +189,24 @@ namespace Hooks
 	bool HasSpuAdpcmSink();
 	void OnSpuAdpcm(const u8* block, s32 prev1In, s32 prev2In, const s16* samples, s32 prev1Out,
 		s32 prev2Out);
+	/* One reverb cycle: the ten words it read with their addresses, the
+	 * coefficients and downsampled input it used, and the four words it wrote
+	 * plus the sample it returned. A closed case, so a replay needs no copy of
+	 * the work area. */
+	struct SpuReverbCase
+	{
+		u32 core, right, fxEnable;
+		u32 addr[10];
+		s32 mem[10];
+		s32 coef[10];
+		s32 in;
+		s32 same, diff, apf1, apf2, out;
+	};
+	using SpuReverbSink = void (*)(const SpuReverbCase& c);
+	void SetSpuReverbSink(SpuReverbSink sink);
+	bool HasSpuReverbSink();
+	void OnSpuReverb(const SpuReverbCase& c);
+
 	using SpuVoiceSink = void (*)(u32 core, u32 voice, u32 stage, s32 outL, s32 outR);
 	void SetSpuVoiceSink(SpuVoiceSink sink);
 	bool HasSpuVoiceSink();

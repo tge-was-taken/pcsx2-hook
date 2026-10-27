@@ -301,6 +301,7 @@ void SpuTrace::init() {
     });
     Hooks::SetSpuAdpcmSink(&spuAdpcmSink);
     Hooks::SetSpuVoiceSink(&spuVoiceSink);
+    Hooks::SetSpuReverbSink(&spuReverbSink);
     Hooks::SetSpuRegSink(&spuRegWriteSink, &spuRegReadSink);
     std::fprintf(stderr, "[spu] recording SPU2 vectors\n");
 }
@@ -464,6 +465,48 @@ void SpuTrace::onVoice(uint32_t core, uint32_t voice, uint32_t stage, int32_t ou
     }
 }
 
+/* One reverb cycle. The case is closed, so a replay needs nothing but this
+ * row: the words read with their addresses, the coefficients, the downsampled
+ * input, and what was written and returned. */
+void SpuTrace::onReverb(const Hooks::SpuReverbCase& c) {
+    static const char* const kAddrNames[10] = {"same_src", "same_prv", "diff_src",
+        "diff_prv", "comb1_src", "comb2_src", "comb3_src", "comb4_src", "apf1_src",
+        "apf2_src"};
+    static const char* const kCoefNames[9] = {"in_coef", "iir_vol", "wall_vol",
+        "comb1_vol", "comb2_vol", "comb3_vol", "comb4_vol", "apf1_vol", "apf2_vol"};
+
+    mReverbCycles++;
+    const std::string form = std::string("c") + std::to_string(c.core)
+        + (c.right ? ".r" : ".l") + (c.fxEnable ? ".on" : ".off");
+    uint64_t key = hashMix(c.core * 4 + c.right * 2 + c.fxEnable, static_cast<uint32_t>(c.in));
+    for (int i = 0; i < 10; i++) {
+        key = hashMix(key, (static_cast<uint64_t>(c.addr[i]) << 32) ^ static_cast<uint32_t>(c.mem[i]));
+        key = hashMix(key, static_cast<uint32_t>(c.coef[i]));
+    }
+    if (!admit(mReverb, form, key)) return;
+
+    JsonObject row;
+    row.addString("form", form.c_str())
+        .addUint("core", c.core)
+        .addUint("right", c.right)
+        .addUint("fxEnable", c.fxEnable)
+        .addInt("in", c.in)
+        .beginObject("addr");
+    for (int i = 0; i < 10; i++) row.addUint(kAddrNames[i], c.addr[i]);
+    row.endObject().beginObject("mem");
+    for (int i = 0; i < 10; i++) row.addInt(kAddrNames[i], c.mem[i]);
+    row.endObject().beginObject("coef");
+    for (int i = 0; i < 9; i++) row.addInt(kCoefNames[i], c.coef[i]);
+    row.endObject().beginObject("out")
+        .addInt("same", c.same)
+        .addInt("diff", c.diff)
+        .addInt("apf1", c.apf1)
+        .addInt("apf2", c.apf2)
+        .addInt("out", c.out)
+        .endObject();
+    accept(mReverb, form, row.take());
+}
+
 void SpuTrace::onRegWrite(uint32_t addr, uint16_t value, bool after) {
     uint32_t core = 0;
     int voice = -1;
@@ -546,7 +589,7 @@ void SpuTrace::write() {
     std::filesystem::create_directories(dir, ec);
 
     size_t total = 0;
-    for (Unit* u : {&mAdpcm, &mAdsr, &mVolume, &mVoice, &mReg}) {
+    for (Unit* u : {&mAdpcm, &mAdsr, &mVolume, &mVoice, &mReg, &mReverb}) {
         std::stable_sort(u->formRows.begin(), u->formRows.end(),
                          [](const auto& a, const auto& b) { return a.first < b.first; });
         if (FILE* f = std::fopen((dir + "/" + u->file).c_str(), "w")) {
@@ -558,7 +601,7 @@ void SpuTrace::write() {
 
     if (FILE* g = std::fopen((dir + "/spu_forms.jsonl").c_str(), "w")) {
         JsonTable t(g, {"unit", "form", "cases"});
-        for (Unit* u : {&mAdpcm, &mAdsr, &mVolume, &mVoice, &mReg}) {
+        for (Unit* u : {&mAdpcm, &mAdsr, &mVolume, &mVoice, &mReg, &mReverb}) {
             std::string unit(u->file);
             unit = unit.substr(4, unit.find("_vectors") - 4);
             std::vector<std::string> names;
@@ -571,12 +614,15 @@ void SpuTrace::write() {
         std::fclose(g);
     }
 
-    std::printf("[spu] %s: %zu vectors (adpcm %zu, adsr %zu, volume %zu, voice %zu, reg %zu) over "
-                "%llu voice samples, %llu blocks, %llu writes, %llu reads\n",
+    std::printf("[spu] %s: %zu vectors (adpcm %zu, adsr %zu, volume %zu, voice %zu, reg %zu, "
+                "reverb %zu) over %llu voice samples, %llu blocks, %llu writes, %llu reads, "
+                "%llu reverb cycles\n",
                 dir.c_str(), total, mAdpcm.formRows.size(), mAdsr.formRows.size(), mVolume.formRows.size(),
-                mVoice.formRows.size(), mReg.formRows.size(), static_cast<unsigned long long>(mVoiceSamples),
+                mVoice.formRows.size(), mReg.formRows.size(), mReverb.formRows.size(),
+                static_cast<unsigned long long>(mVoiceSamples),
                 static_cast<unsigned long long>(mAdpcmBlocks),
-                static_cast<unsigned long long>(mRegWrites), static_cast<unsigned long long>(mRegReads));
+                static_cast<unsigned long long>(mRegWrites), static_cast<unsigned long long>(mRegReads),
+                static_cast<unsigned long long>(mReverbCycles));
 }
 
 void spuAdpcmSink(const uint8_t* block, int32_t prev1In, int32_t prev2In, const int16_t* samples,
@@ -586,6 +632,10 @@ void spuAdpcmSink(const uint8_t* block, int32_t prev1In, int32_t prev2In, const 
 
 void spuVoiceSink(uint32_t core, uint32_t voice, uint32_t stage, int32_t outL, int32_t outR) {
     Diagnostics::get().getSpu().onVoice(core, voice, stage, outL, outR);
+}
+
+void spuReverbSink(const Hooks::SpuReverbCase& c) {
+    Diagnostics::get().getSpu().onReverb(c);
 }
 
 void spuRegWriteSink(uint32_t addr, uint16_t value, bool after) {
