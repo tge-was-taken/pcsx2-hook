@@ -16,6 +16,9 @@
 #include "SPU2/Dma.h"
 #include "SPU2/regs.h"
 #include "SPU2/spu2.h"
+#ifdef PCSX2HOOK
+#include "pcsx2/Hooks.h"
+#endif
 
 #include "common/Console.h"
 
@@ -343,6 +346,43 @@ __forceinline void TimeUpdate(u32 cClocks)
 		dClocks -= TickInterval;
 		lClocks += TickInterval;
 		Cycles++;
+
+#ifdef PCSX2HOOK
+		/* Hold some voices in states the running program never asks for, so a
+		 * trace of it can still cover them. A program that sets neither NON
+		 * nor PMON nor a sweep leaves those paths unrecorded, and then there
+		 * is nothing for an implementation of them to be checked against. The
+		 * voices are the high ones, which a synth claims last. */
+		if (Hooks::SpuForceMask() != 0)
+		{
+			const u32 force = Hooks::SpuForceMask();
+			for (int c = 0; c < 2; c++)
+			{
+				for (int v = 20; v < 24; v++)
+				{
+					if (force & 1)
+						Cores[c].Voices[v].Noise = 1;
+					if ((force & 2) && v > 0)
+						Cores[c].Voices[v].Modulated = 1;
+					if (force & 4)
+					{
+						/* Reg_VOL is a union over the slide bitfields, so the
+						 * register value is the whole setting. Bit 15 selects
+						 * sweep mode; the exponential and decreasing bits are
+						 * varied per voice so more than one form is seen. */
+						const u16 reg = static_cast<u16>(0x8000 | ((v & 1) << 14) |
+							(((v >> 1) & 1) << 13) | (20 << 2) | 3);
+						Cores[c].Voices[v].Volume.Left.Reg_VOL = reg;
+						Cores[c].Voices[v].Volume.Right.Reg_VOL = reg;
+						if (Cores[c].Voices[v].Volume.Left.Value == 0)
+							Cores[c].Voices[v].Volume.Left.Value = 0x3fff;
+						if (Cores[c].Voices[v].Volume.Right.Value == 0)
+							Cores[c].Voices[v].Volume.Right.Value = 0x3fff;
+					}
+				}
+			}
+		}
+#endif
 
 		for(int c = 0; c < 2; c++)
 		{

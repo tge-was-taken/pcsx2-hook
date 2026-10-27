@@ -196,12 +196,17 @@ namespace Hooks
 	struct SpuReverbCase
 	{
 		u32 core, right, fxEnable;
+		u32 cycles, startA, endA;
 		u32 addr[10];
 		s32 mem[10];
 		s32 coef[10];
 		s32 in;
 		s32 same, diff, apf1, apf2, out;
 	};
+	/* Bit 0 noise, bit 1 pitch modulation, bit 2 a volume sweep. */
+	void SetSpuForceMask(u32 mask);
+	u32 SpuForceMask();
+
 	using SpuReverbSink = void (*)(const SpuReverbCase& c);
 	void SetSpuReverbSink(SpuReverbSink sink);
 	bool HasSpuReverbSink();

@@ -302,6 +302,11 @@ void SpuTrace::init() {
     Hooks::SetSpuAdpcmSink(&spuAdpcmSink);
     Hooks::SetSpuVoiceSink(&spuVoiceSink);
     Hooks::SetSpuReverbSink(&spuReverbSink);
+    if (const char* force = Config::get().getValue("PCSX2HOOK_SPU_FORCE")) {
+        const u32 mask = static_cast<u32>(std::strtoul(force, nullptr, 0));
+        Hooks::SetSpuForceMask(mask);
+        std::fprintf(stderr, "[spu] forcing voice states, mask %u\n", mask);
+    }
     Hooks::SetSpuRegSink(&spuRegWriteSink, &spuRegReadSink);
     std::fprintf(stderr, "[spu] recording SPU2 vectors\n");
 }
@@ -491,6 +496,9 @@ void SpuTrace::onReverb(const Hooks::SpuReverbCase& c) {
         .addUint("right", c.right)
         .addUint("fxEnable", c.fxEnable)
         .addInt("in", c.in)
+        .addUint("cycles", c.cycles)
+        .addUint("startA", c.startA)
+        .addUint("endA", c.endA)
         .beginObject("addr");
     for (int i = 0; i < 10; i++) row.addUint(kAddrNames[i], c.addr[i]);
     row.endObject().beginObject("mem");

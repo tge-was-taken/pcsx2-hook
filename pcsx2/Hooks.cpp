@@ -331,6 +331,7 @@ namespace
 	Hooks::SpuAdpcmSink s_spuAdpcmSink = nullptr;
 	Hooks::SpuVoiceSink s_spuVoiceSink = nullptr;
 	Hooks::SpuReverbSink s_spuReverbSink = nullptr;
+	u32 s_spuForceMask = 0;
 	Hooks::SpuRegWriteSink s_spuRegWrite = nullptr;
 	Hooks::SpuRegReadSink s_spuRegRead = nullptr;
 } // namespace
@@ -350,6 +351,16 @@ void Hooks::OnSpuAdpcm(const u8* block, s32 prev1In, s32 prev2In, const s16* sam
 {
 	if (s_spuAdpcmSink)
 		s_spuAdpcmSink(block, prev1In, prev2In, samples, prev1Out, prev2Out);
+}
+
+void Hooks::SetSpuForceMask(u32 mask)
+{
+	s_spuForceMask = mask;
+}
+
+u32 Hooks::SpuForceMask()
+{
+	return s_spuForceMask;
 }
 
 void Hooks::SetSpuReverbSink(SpuReverbSink sink)

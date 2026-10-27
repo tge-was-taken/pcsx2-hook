@@ -118,6 +118,14 @@ Reference vectors for three more units, each a `pcsx2hook_trace` value (`--trace
 `scripts/hw_vectors_merge.py` unions them across runs, and `scripts/hw_vectors_check.py` checks
 them against models that do not come from the emulator's code.
 
+`PCSX2HOOK_SPU_FORCE` holds voices 20 to 23 of both cores in states the running program may never
+ask for, so a trace can cover them anyway: bit 0 noise, bit 1 pitch modulation, bit 2 a volume in
+sweep mode, with the exponential and decreasing bits varied per voice. A program that sets none of
+them leaves those paths unrecorded, and then there is nothing for an implementation of them to be
+checked against. It changes what the program sounds like, so use it for a corpus run and not for a
+comparison. Note that noise takes precedence over modulation when a case is labelled, so a voice
+given both reports as noise and still takes the modulated pitch step.
+
 `spu_reverb_vectors.jsonl` is one cycle of the reverb network per row, and it is recorded as a
 closed case: the ten words it read with their addresses, the nine coefficients, the downsampled
 input, and the four words it wrote plus the sample it returned. That is deliberate. The work area

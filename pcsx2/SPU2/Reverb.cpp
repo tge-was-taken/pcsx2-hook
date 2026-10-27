@@ -165,6 +165,11 @@ StereoOut32 V_Core::DoReverb(StereoOut32 Input)
 		c.core = Index;
 		c.right = R;
 		c.fxEnable = FxEnable;
+		/* The three the addresses are built from, so a reader can check the
+		 * indexing and not just the arithmetic over it. */
+		c.cycles = Cycles;
+		c.startA = EffectsStartA;
+		c.endA = EffectsEndA;
 		for (int i = 0; i < 10; i++)
 		{
 			c.addr[i] = addrs[i];
