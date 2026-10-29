@@ -431,6 +431,25 @@ size_t pcsx2hook_read_gs_pixels(pcsx2hook_ctx* ctx, uint32_t tbp0, uint32_t tbw,
     return needed;
 }
 
+size_t pcsx2hook_read_gs_memory(pcsx2hook_ctx* ctx, void* out, size_t size) {
+    if (!ctx) return 0;
+    const size_t needed = size_t(GSLocalMemory::m_vmsize);
+    if (!out || size < needed) return needed;
+
+    bool ok = false;
+    MTGS::RunOnGSThread([&]() {
+        if (!g_gs_renderer) return;
+        std::memcpy(out, g_gs_renderer->m_mem.vm8(), needed);
+        ok = true;
+    });
+    MTGS::WaitGS(false, false, false);
+    if (!ok) {
+        ctx->error = "no GS renderer to read from";
+        return 0;
+    }
+    return needed;
+}
+
 size_t pcsx2hook_get_gs_rows(pcsx2hook_ctx* ctx, uint32_t frame, char* out, size_t size) {
     if (!ctx) return 0;
     const std::string rows = Diagnostics::get().getGsDraws().getRowsForFrame(frame);

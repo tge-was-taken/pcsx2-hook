@@ -299,6 +299,16 @@ PCSX2HOOK_API size_t pcsx2hook_read_gs_pixels(pcsx2hook_ctx* ctx, uint32_t tbp0,
 	uint32_t psm, uint32_t width, uint32_t height, uint32_t* out, size_t count);
 
 /**
+ * @brief Reads the GS's local memory whole, the 4 MB a GS dump's state blob carries.
+ * @param out Receives the bytes, or null to ask for the size.
+ * @param size Bytes @p out can hold.
+ * @return Bytes the read needs, or 0 when there is no renderer.
+ * @note Runs on the GS thread and waits, so everything queued before the call has been drawn
+ *       into it: called from a hook at a DMA kick, it is the memory the chain starts from.
+ */
+PCSX2HOOK_API size_t pcsx2hook_read_gs_memory(pcsx2hook_ctx* ctx, void* out, size_t size);
+
+/**
  * @brief Opens a draw context that traced work is attributed to. Pair with ::pcsx2hook_pop_draw.
  * @note @p label keeps 31 characters. Work the guest kicks after the pop is unattributed.
  */
