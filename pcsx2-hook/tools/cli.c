@@ -59,6 +59,97 @@ enum
 
 static press s_presses[kMaxPresses];
 static int s_pressCount;
+
+/* A scheduled call into the guest: a game's own entry point, run at a chosen
+ * frame with chosen arguments. The game's sequence manager is the reason this
+ * exists: dds3AdminiCallSequence(6, 0, 0, 0) puts SMT3 in a field, so a scene
+ * is a call rather than a savestate, and the same call drives a native port. */
+typedef struct
+{
+	unsigned frame;
+	char symbol[64];
+	uint32_t args[4];
+	int argCount;
+	int done;
+} guestCall;
+
+enum { kMaxCalls = 16 };
+static guestCall s_calls[kMaxCalls];
+static int s_callCount;
+static uint32_t s_frame;
+
+/* A scheduled write into guest memory, made from the same anchor as a call and
+ * just before it, so a scene can be selected before the sequence that reads it
+ * starts. */
+typedef struct
+{
+	unsigned frame;
+	uint32_t addr;
+	uint32_t value;
+	uint32_t size;
+	int done;
+} guestPoke;
+
+enum { kMaxPokes = 32 };
+static guestPoke s_pokes[kMaxPokes];
+static int s_pokeCount;
+
+/* FRAME:ADDR:VALUE[:SIZE] */
+static int addPoke(const char* text)
+{
+	guestPoke* poke;
+
+	if (s_pokeCount == kMaxPokes)
+		return 0;
+	poke = &s_pokes[s_pokeCount];
+	memset(poke, 0, sizeof(*poke));
+	poke->size = 4;
+	if (sscanf(text, "%u:%x:%i:%u", &poke->frame, &poke->addr, (int*)&poke->value,
+			&poke->size) < 3)
+	{
+		if (sscanf(text, "%u:%x:%i", &poke->frame, &poke->addr, (int*)&poke->value) < 3)
+			return 0;
+		poke->size = 4;
+	}
+	if (poke->size != 1 && poke->size != 2 && poke->size != 4)
+		return 0;
+	s_pokeCount++;
+	return 1;
+}
+/* Where a scheduled call is made from. pcsx2hook_call_ee is for hook handlers
+ * only, because it masks EE interrupts and needs the processor stopped at a
+ * known point; made from the frame callback the call runs and its effects do
+ * not stick. So the calls are fired from a hook on a function the game reaches
+ * every frame. */
+static const char* s_callAnchor = "sdfWaitVblank";
+
+/* FRAME:SYMBOL[:a0[,a1[,a2[,a3]]]] */
+static int addCall(const char* text)
+{
+	guestCall* call;
+	int n = 0;
+
+	if (s_callCount == kMaxCalls)
+		return 0;
+	call = &s_calls[s_callCount];
+	memset(call, 0, sizeof(*call));
+	if (sscanf(text, "%u:%63[^:]%n", &call->frame, call->symbol, &n) < 2)
+		return 0;
+	if (text[n] == ':')
+	{
+		const char* at = text + n + 1;
+		while (*at && call->argCount < 4)
+		{
+			call->args[call->argCount++] = (uint32_t)strtoul(at, (char**)&at, 0);
+			if (*at == ',')
+				at++;
+			else
+				break;
+		}
+	}
+	s_callCount++;
+	return 1;
+}
 static pcsx2hook_ctx* s_ctx;
 
 static int parsePress(const char* text)
@@ -261,6 +352,8 @@ static int readList(const char* path, char* out, size_t n)
 	return used != 0;
 }
 
+static int onCallAnchor(pcsx2hook_regs* regs, void* user);
+
 static void onVmReady(void* user)
 {
 	(void)user;
@@ -268,6 +361,17 @@ static void onVmReady(void* user)
 	{
 		if (!pcsx2hook_add_hook(s_ctx, s_feeds[i].addr, feedPre, NULL, &s_feeds[i]))
 			fprintf(stderr, "cannot hook %08X\n", s_feeds[i].addr);
+	}
+	if (s_callCount || s_pokeCount)
+	{
+		uint32_t anchor = pcsx2hook_find_symbol(s_ctx, s_callAnchor);
+
+		if (anchor == 0)
+			fprintf(stderr, "[call] no symbol named %s to call from\n", s_callAnchor);
+		else if (!pcsx2hook_add_hook(s_ctx, anchor, onCallAnchor, NULL, NULL))
+			fprintf(stderr, "[call] cannot hook %s at %08X\n", s_callAnchor, anchor);
+		else
+			fprintf(stderr, "[call] calling from %s at %08X\n", s_callAnchor, anchor);
 	}
 }
 
@@ -286,9 +390,57 @@ static void onShutdown(void* user)
 	}
 }
 
+/* The anchor's pre-handler: the EE is stopped here, which is the only place a
+ * guest call is allowed. */
+static int onCallAnchor(pcsx2hook_regs* regs, void* user)
+{
+	(void)regs;
+	(void)user;
+	for (int i = 0; i < s_pokeCount; i++)
+	{
+		guestPoke* poke = &s_pokes[i];
+		void* at;
+
+		if (poke->done || s_frame < poke->frame)
+			continue;
+		poke->done = 1;
+		at = pcsx2hook_map_guest(s_ctx, poke->addr, poke->size);
+		if (!at)
+		{
+			fprintf(stderr, "[poke] %08X is not mapped\n", poke->addr);
+			continue;
+		}
+		memcpy(at, &poke->value, poke->size);
+		fprintf(stderr, "[poke] frame %u: %08X = %u (%u byte(s))\n", s_frame,
+			poke->addr, poke->value, poke->size);
+	}
+	for (int i = 0; i < s_callCount; i++)
+	{
+		guestCall* call = &s_calls[i];
+		uint32_t pc;
+
+		if (call->done || s_frame < call->frame)
+			continue;
+		call->done = 1;
+		pc = pcsx2hook_find_symbol(s_ctx, call->symbol);
+		if (pc == 0)
+		{
+			fprintf(stderr, "[call] no symbol named %s; is a map loaded?\n", call->symbol);
+			continue;
+		}
+		fprintf(stderr, "[call] frame %u: %s(", s_frame, call->symbol);
+		for (int a = 0; a < call->argCount; a++)
+			fprintf(stderr, a ? ", %u" : "%u", call->args[a]);
+		fprintf(stderr, ") = ");
+		fprintf(stderr, "%u\n", pcsx2hook_call_ee(s_ctx, pc, call->args, call->argCount));
+	}
+	return PCSX2HOOK_CONTINUE;
+}
+
 static void onFrame(uint32_t frame, void* user)
 {
 	(void)user;
+	s_frame = frame;
 	for (int i = 0; i < s_pressCount; i++)
 	{
 		if (frame == s_presses[i].frame)
@@ -315,6 +467,10 @@ static void usage(FILE* f)
 		"  --set NAME=VALUE    any other library setting, by its PCSX2HOOK_ variable name\n"
 		"  --press F:BUTTON[:N]  press BUTTON at frame F for N frames; repeat for more\n"
 		"  --script FILE       the same as lines of \"FRAME BUTTON [HOLD]\", # comments\n"
+		"  --call F:SYM[:a0,a1,..]  call the guest function SYM at frame F; repeat for more\n"
+		"  --poke F:ADDR:VAL[:SIZE]  write guest memory at frame F, before any --call\n"
+		"  --call-anchor SYM   where those calls are made from, a function the game\n"
+		"                      reaches every frame (default sdfWaitVblank)\n"
 		"  --arg ADDR:REG:LIST   feed register REG a different value from LIST at each\n"
 		"                      call of the function at ADDR, cycling\n"
 		"  --arg-file ADDR:REG:FILE  the same, with the values read from FILE\n"
@@ -478,6 +634,34 @@ int main(int argc, char** argv)
 			}
 			i++;
 		}
+		else if (strcmp(a, "--poke") == 0)
+		{
+			if (!v || !addPoke(v))
+			{
+				fprintf(stderr, "--poke takes FRAME:ADDR:VALUE[:SIZE]\n");
+				return 2;
+			}
+			i++;
+		}
+		else if (strcmp(a, "--call-anchor") == 0)
+		{
+			if (!v)
+			{
+				fprintf(stderr, "--call-anchor takes a symbol name\n");
+				return 2;
+			}
+			s_callAnchor = v;
+			i++;
+		}
+		else if (strcmp(a, "--call") == 0)
+		{
+			if (!v || !addCall(v))
+			{
+				fprintf(stderr, "--call takes FRAME:SYMBOL[:a0,a1,a2,a3]\n");
+				return 2;
+			}
+			i++;
+		}
 		else if (strcmp(a, "--press") == 0)
 		{
 			if (!v || !parsePress(v))
@@ -515,9 +699,9 @@ int main(int argc, char** argv)
 	cfg.symbols = symbols;
 	cfg.surfaceless = 1;
 	cfg.software_gs = softwareGs;
-	if (s_pressCount)
+	if (s_pressCount || s_callCount || s_pokeCount)
 		cfg.on_frame = onFrame;
-	if (s_feedCount)
+	if (s_feedCount || s_callCount || s_pokeCount)
 	{
 		cfg.on_vm_ready = onVmReady;
 		cfg.on_shutdown = onShutdown;
