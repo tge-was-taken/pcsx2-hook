@@ -2602,6 +2602,7 @@ void GSState::FlushPrim()
 				default: return fb->mem->ReadPixel32(x, y, fb->fbp, fb->fbw);
 			}
 		};
+		hookDraw.burst = Hooks::GetGsPacketBurst();
 		Hooks::OnGsDraw(hookDraw);
 #else
 		GL_REG("FlushPrim ctxt %d", PRIM->CTXT);

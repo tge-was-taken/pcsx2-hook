@@ -11,6 +11,7 @@
 
 #include "fmt/format.h"
 
+#include <atomic>
 #include <iterator>
 #include <unordered_map>
 #include <vector>
@@ -35,6 +36,15 @@ namespace
 	Hooks::VifCodeSink s_vifCodeSink = nullptr;
 	Hooks::GsVSyncSink s_gsVSyncSink = nullptr;
 	Hooks::GifTransferSink s_gifTransferSink = nullptr;
+
+	/* One slot per GS packet in flight. The EE writes and the GS reads, one
+	 * each, so the two positions are all the synchronisation it needs. */
+	constexpr size_t s_burstSlots = 8192;
+	std::atomic<s64> s_gifBurst{-1};
+	s64 s_burstQueue[s_burstSlots] = {};
+	std::atomic<size_t> s_burstWrite{0};
+	std::atomic<size_t> s_burstRead{0};
+	std::atomic<s64> s_gsBurst{-1};
 
 	u32 s_returnSentinel = 0;
 	u32 s_callMarker = 0;
@@ -219,6 +229,32 @@ void Hooks::OnGifTransfer(u32 path, const u8* data, u32 bytes)
 {
 	if (s_gifTransferSink)
 		s_gifTransferSink(path, data, bytes);
+}
+
+void Hooks::SetGifBurst(s64 ordinal)
+{
+	s_gifBurst.store(ordinal, std::memory_order_relaxed);
+}
+
+void Hooks::PushGsPacketBurst()
+{
+	const size_t at = s_burstWrite.load(std::memory_order_relaxed);
+	s_burstQueue[at % s_burstSlots] = s_gifBurst.load(std::memory_order_relaxed);
+	s_burstWrite.store(at + 1, std::memory_order_release);
+}
+
+void Hooks::PopGsPacketBurst()
+{
+	const size_t at = s_burstRead.load(std::memory_order_relaxed);
+	if (at == s_burstWrite.load(std::memory_order_acquire))
+		return;
+	s_gsBurst.store(s_burstQueue[at % s_burstSlots], std::memory_order_relaxed);
+	s_burstRead.store(at + 1, std::memory_order_relaxed);
+}
+
+s64 Hooks::GetGsPacketBurst()
+{
+	return s_gsBurst.load(std::memory_order_relaxed);
 }
 
 void Hooks::SetVu1UploadSink(Vu1UploadSink sink)

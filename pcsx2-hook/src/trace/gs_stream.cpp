@@ -81,6 +81,8 @@ void GsStream::onTransfer(u32 path, const u8* data, u32 bytes) {
 
     mTransfers++;
     mBytes += bytes;
+    // The ordinal of the burst just written, for the GS batches it draws.
+    Hooks::SetGifBurst(std::int64_t(mTransfers) - 1);
 }
 
 void GsStream::writeRegisters(const u8* registers) {

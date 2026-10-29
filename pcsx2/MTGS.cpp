@@ -4,6 +4,9 @@
 #include "GS.h"
 #include "Gif_Unit.h"
 #include "MTGS.h"
+#ifdef PCSX2HOOK
+#include "Hooks.h"
+#endif
 #include "MTVU.h"
 #include "Host.h"
 #include "IconsFontAwesome.h"
@@ -451,6 +454,9 @@ void MTGS::MainLoop()
 					Gif_Path& path = gifUnit.gifPath[tag.data[2]];
 					u32 offset = tag.data[0];
 					u32 size = tag.data[1];
+#ifdef PCSX2HOOK
+					Hooks::PopGsPacketBurst();
+#endif
 					if (offset != ~0u)
 						GSgifTransfer((u8*)&path.buffer[offset], size / 16);
 					path.readAmount.fetch_sub(size, std::memory_order_acq_rel);
@@ -469,6 +475,9 @@ void MTGS::MainLoop()
 					}
 					Gif_Path& path = gifUnit.gifPath[GIF_PATH_1];
 					GS_Packet gsPack = path.GetGSPacketMTVU(); // Get vu1 program's xgkick packet(s)
+#ifdef PCSX2HOOK
+					Hooks::PopGsPacketBurst();
+#endif
 					if (gsPack.size)
 						GSgifTransfer((u8*)&path.buffer[gsPack.offset], gsPack.size / 16);
 					path.readAmount.fetch_sub(gsPack.size + gsPack.readAmount, std::memory_order_acq_rel);
@@ -1051,6 +1060,9 @@ void MTGS::SetRunIdle(bool enabled)
 // Used in MTVU mode... MTVU will later complete a real packet
 void Gif_AddGSPacketMTVU(GS_Packet& gsPack, GIF_PATH path)
 {
+#ifdef PCSX2HOOK
+	Hooks::PushGsPacketBurst();
+#endif
 	MTGS::SendSimpleGSPacket(MTGS::Command::MTVUGSPacket, 0, 0, path);
 }
 
@@ -1068,6 +1080,9 @@ void Gif_AddCompletedGSPacket(GS_Packet& gsPack, GIF_PATH path)
 	{
 		pxAssertMsg(!gsPack.readAmount, "Gif Unit - gsPack.readAmount only valid for MTVU path 1!");
 		gifUnit.gifPath[path].readAmount.fetch_add(gsPack.size);
+#ifdef PCSX2HOOK
+		Hooks::PushGsPacketBurst();
+#endif
 		MTGS::SendSimpleGSPacket(MTGS::Command::GSPacket, gsPack.offset, gsPack.size, path);
 	}
 }
@@ -1076,6 +1091,9 @@ void Gif_AddBlankGSPacket(u32 size, GIF_PATH path)
 {
 	//DevCon.WriteLn("Adding Blank Gif Packet [size=%x]", size);
 	gifUnit.gifPath[path].readAmount.fetch_add(size);
+#ifdef PCSX2HOOK
+	Hooks::PushGsPacketBurst();
+#endif
 	MTGS::SendSimpleGSPacket(MTGS::Command::GSPacket, ~0u, size, path);
 }
 

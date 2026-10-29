@@ -110,6 +110,8 @@ namespace Hooks
 		u32 rgbaq, nverts, fog, zMin, zMax;
 		u32 pabe, colclamp, fba, dthe;
 		u32 dispW, dispH, dispFbp0, dispFbp1;
+		// The GIF burst these primitives arrived in, or -1 when nothing counts bursts.
+		s64 burst;
 		float q;
 		float bbox[4];
 		// Call syncPixels once before readPixel: the software rasterizer draws on worker threads.
@@ -175,6 +177,18 @@ namespace Hooks
 	void SetGifTransferSink(GifTransferSink sink);
 	bool HasGifTransferSink();
 	void OnGifTransfer(u32 path, const u8* data, u32 bytes);
+
+	/* Which GIF burst a GS batch's primitives arrived in.
+	 *
+	 * Bursts are counted where the GIF is fed, on the EE thread, and the GS
+	 * consumes them later on its own, so the ordinal travels with the GS
+	 * packet: pushed where the packet is queued, popped where it is handed to
+	 * the GS. -1 until one has been counted, which is the case when nothing is
+	 * counting them. */
+	void SetGifBurst(s64 ordinal);
+	void PushGsPacketBurst();
+	void PopGsPacketBurst();
+	s64 GetGsPacketBurst();
 
 	using VifTagSink = void (*)(u32 tadr, u32 id, u32 madr, u32 qwc);
 	void SetVifTagSink(VifTagSink sink);

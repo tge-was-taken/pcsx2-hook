@@ -217,6 +217,7 @@ void GsDraws::onDraw(const Hooks::GsDraw& d) {
             .addString("type", "gs")
             .addUint("i", mFrameIndex++)
             .addUint("f", mGsFrame.load())
+            .addInt("burst", d.burst)
             .addUint("nverts", nverts)
             .addUint("prim", bits(prim, 0, 3))
             .addUint("ctxt", bits(prim, 9, 1))
