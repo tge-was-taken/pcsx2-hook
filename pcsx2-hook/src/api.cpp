@@ -652,6 +652,22 @@ size_t pcsx2hook_take_gs_capture(pcsx2hook_ctx* ctx, void* out, size_t size, uin
     return needed;
 }
 
+namespace {
+pcsx2hook_dma_kick_fn s_dmaKickFn = nullptr;
+void* s_dmaKickUser = nullptr;
+
+void dmaKickTrampoline(u32 chan, u32 eepc, u32 madr, u32 qwc) {
+    if (s_dmaKickFn) s_dmaKickFn(chan, eepc, madr, qwc, s_dmaKickUser);
+}
+}  // namespace
+
+void pcsx2hook_set_dma_kick_sink(pcsx2hook_ctx* ctx, pcsx2hook_dma_kick_fn fn, void* user) {
+    if (!ctx) return;
+    s_dmaKickFn = fn;
+    s_dmaKickUser = user;
+    Hooks::AddDmaKickSink(&dmaKickTrampoline);
+}
+
 uint64_t pcsx2hook_get_gs_stream_transfers(pcsx2hook_ctx* ctx) {
     if (!ctx) return 0;
     return GsStream::get().getTransfers();

@@ -214,6 +214,19 @@ PCSX2HOOK_API void pcsx2hook_add_string_list_setting(pcsx2hook_ctx* ctx, const c
 PCSX2HOOK_API int pcsx2hook_add_hook(pcsx2hook_ctx* ctx, uint32_t addr, pcsx2hook_pre_fn pre,
 	pcsx2hook_post_fn post, void* user);
 
+/**
+ * @brief Every DMA kick on any channel, with the EE address that started it.
+ * @note Covers a channel started by a store to CHCR as well as one started through a library
+ *       call, which is the only way to see the GIF's own channel: libgraph writes D2_CHCR itself.
+ *       Runs on the emulator's CPU thread.
+ */
+typedef void (*pcsx2hook_dma_kick_fn)(uint32_t chan, uint32_t eepc, uint32_t madr, uint32_t qwc,
+	void* user);
+
+/** @brief Registers a ::pcsx2hook_dma_kick_fn. Register from @c on_vm_ready. */
+PCSX2HOOK_API void pcsx2hook_set_dma_kick_sink(pcsx2hook_ctx* ctx, pcsx2hook_dma_kick_fn fn,
+	void* user);
+
 /** @brief Observes every hooked call before its own handler, for recording the whole stream. */
 PCSX2HOOK_API void pcsx2hook_set_hook_observer(pcsx2hook_ctx* ctx, pcsx2hook_post_fn fn, void* user);
 
