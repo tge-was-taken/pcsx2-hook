@@ -11,6 +11,7 @@ add_library(pcsx2hook SHARED
 	src/trace/dump_dir.cpp
 	src/trace/exec_trace.cpp
 	src/trace/gs_draws.cpp
+	src/trace/gs_stream.cpp
 	src/trace/gs_tracker.cpp
 	src/trace/hw_trace.cpp
 	src/trace/insn_trace.cpp

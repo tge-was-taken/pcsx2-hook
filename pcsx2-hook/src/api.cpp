@@ -29,6 +29,7 @@
 #include "diagnostics.h"
 #include "trace/draw_context.h"
 #include "host.h"
+#include "trace/gs_stream.h"
 #include "symbols.h"
 
 using namespace pcsx2hook;
@@ -649,6 +650,11 @@ size_t pcsx2hook_take_gs_capture(pcsx2hook_ctx* ctx, void* out, size_t size, uin
         ctx->capture.clear();
     }
     return needed;
+}
+
+uint64_t pcsx2hook_get_gs_stream_transfers(pcsx2hook_ctx* ctx) {
+    if (!ctx) return 0;
+    return GsStream::get().getTransfers();
 }
 
 size_t pcsx2hook_write_gs_last_frame(pcsx2hook_ctx* ctx, const char* path) {

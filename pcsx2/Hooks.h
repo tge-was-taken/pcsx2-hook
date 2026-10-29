@@ -168,6 +168,14 @@ namespace Hooks
 	void SetGsDrawSink(GsDrawSink sink);
 	void OnGsDraw(const GsDraw& draw);
 
+	/* Every burst the GIF receives, before it is parsed: the graphics command
+	 * stream as the hardware gets it. A host emulating its own PS2 can replay
+	 * these, and pcsx2hook_gs_transfer takes the same three arguments. */
+	using GifTransferSink = void (*)(u32 path, const u8* data, u32 bytes);
+	void SetGifTransferSink(GifTransferSink sink);
+	bool HasGifTransferSink();
+	void OnGifTransfer(u32 path, const u8* data, u32 bytes);
+
 	using VifTagSink = void (*)(u32 tadr, u32 id, u32 madr, u32 qwc);
 	void SetVifTagSink(VifTagSink sink);
 	void OnVifTag(u32 tadr, u32 id, u32 madr, u32 qwc);

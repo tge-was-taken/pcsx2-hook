@@ -118,6 +118,13 @@ Reference vectors for three more units, each a `pcsx2hook_trace` value (`--trace
 `scripts/hw_vectors_merge.py` unions them across runs, and `scripts/hw_vectors_check.py` checks
 them against models that do not come from the emulator's code.
 
+`PCSX2HOOK_GS_STREAM` writes the graphics command stream instead of a trace of it: every burst the
+GIF receives, as PCSX2's own GS dump packets, so a host emulating its own PS2 can replay what the
+hardware was sent and compare its own stream against it, and `pcsx2hook_gs_transfer` takes the same
+three arguments. `PCSX2HOOK_GS_STREAM_FRAMES` bounds it. The frame boundary is the EE thread's, so
+one thread writes the file in order, and `pcsx2hook_get_gs_stream_transfers` reads the transfer
+count from a hook handler for a host cutting the file where the guest kicked something.
+
 `PCSX2HOOK_SPU_FORCE` holds voices 20 to 23 of both cores in states the running program may never
 ask for, so a trace can cover them anyway: bit 0 noise, bit 1 pitch modulation, bit 2 a volume in
 sweep mode, with the exponential and decreasing bits varied per voice. A program that sets none of

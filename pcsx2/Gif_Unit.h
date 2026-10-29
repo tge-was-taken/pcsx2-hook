@@ -658,6 +658,10 @@ struct Gif_Unit
 		//pxAssertDev((stat.APATH==0) || checkPaths(1,1,1), "Gif Unit - APATH wasn't cleared?");
 		lastTranType = tranType;
 #ifdef PCSX2HOOK
+		// The burst itself, before the GIF parses it. tranType's low two bits
+		// are the path, which is what the GS interface is handed.
+		if (Hooks::HasGifTransferSink())
+			Hooks::OnGifTransfer((tranType & 3) + 1, pMem, size);
 		if (Hooks::HasTimingSink())
 		{
 			const bool hookCanTake = (tranType & 3) == GIF_PATH_1 ? CanDoPath1() :

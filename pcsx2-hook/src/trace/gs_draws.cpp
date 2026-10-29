@@ -18,6 +18,7 @@
 
 #include "MTGS.h"
 #include "config.h"
+#include "gs_stream.h"
 #include "diagnostics.h"
 #include "trace/draw_context.h"
 #include "trace/dump_dir.h"
@@ -403,6 +404,9 @@ void GsDraws::init() {
     }
     Hooks::SetGsDrawSink(&gsDrawSink);
     Hooks::SetGsVSyncSink(&gsVSyncSink);
+    // Independent of this trace: its frame boundary is the EE-side one in
+    // Core::onFrame, so only the file is opened here.
+    GsStream::get().install();
     DrawTrace& draws = Diagnostics::get().getDraws();
     if (draws.isVuTraceEnabled() || draws.isVuWatchEnabled() || draws.isVuExecTraceEnabled()) {
         Hooks::SetVu1UploadSink([](u32 addr, const u32* words, u32 count) {

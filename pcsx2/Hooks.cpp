@@ -34,6 +34,7 @@ namespace
 	Hooks::VifTagSink s_vifTagSink = nullptr;
 	Hooks::VifCodeSink s_vifCodeSink = nullptr;
 	Hooks::GsVSyncSink s_gsVSyncSink = nullptr;
+	Hooks::GifTransferSink s_gifTransferSink = nullptr;
 
 	u32 s_returnSentinel = 0;
 	u32 s_callMarker = 0;
@@ -202,6 +203,22 @@ void Hooks::OnGsVSync()
 {
 	if (s_gsVSyncSink)
 		s_gsVSyncSink();
+}
+
+void Hooks::SetGifTransferSink(GifTransferSink sink)
+{
+	s_gifTransferSink = sink;
+}
+
+bool Hooks::HasGifTransferSink()
+{
+	return s_gifTransferSink != nullptr;
+}
+
+void Hooks::OnGifTransfer(u32 path, const u8* data, u32 bytes)
+{
+	if (s_gifTransferSink)
+		s_gifTransferSink(path, data, bytes);
 }
 
 void Hooks::SetVu1UploadSink(Vu1UploadSink sink)

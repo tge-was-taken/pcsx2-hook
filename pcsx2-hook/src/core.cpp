@@ -25,6 +25,7 @@
 #include "pcsx2/SIO/Pad/PadDualshock2.h"
 #include "pcsx2/VMManager.h"
 #include "symbols.h"
+#include "trace/gs_stream.h"
 
 namespace pcsx2hook {
 namespace {
@@ -262,6 +263,12 @@ bool Core::run(const VMBootParameters& params) {
 }
 
 void Core::onFrame() {
+    // The frame boundary of the command stream, taken here rather than at the
+    // GS's own vsync: the GIF bursts are written from this thread, so a
+    // boundary written from the GS thread interleaves with them by wall clock.
+    // Here the stream's frame count is this counter, and a host can map a
+    // frame of its own to a segment of the file.
+    GsStream::get().onVSync(0);
     mFrameCount++;
     onFrameExtra(mFrameCount);
 

@@ -347,6 +347,25 @@ PCSX2HOOK_API void pcsx2hook_report_gs_tracker(pcsx2hook_ctx* ctx, const char* r
 PCSX2HOOK_API size_t pcsx2hook_take_gs_capture(pcsx2hook_ctx* ctx, void* out, size_t size,
 	uint32_t* width, uint32_t* height, uint32_t* frame);
 
+/** @} */
+
+/** @name Command stream
+ *  Needs @c PCSX2HOOK_GS_STREAM set.
+ *  @{ */
+
+/**
+ * @brief Transfers the command stream has written so far.
+ * @note Read from a hook handler to cut the file where the guest kicked
+ *       something, instead of at the frame boundary the writer records. The
+ *       GIF is fed from the EE thread, so the count is exact there.
+ */
+PCSX2HOOK_API uint64_t pcsx2hook_get_gs_stream_transfers(pcsx2hook_ctx* ctx);
+
+/** @} */
+
+/** @name GS trace, continued
+ *  @{ */
+
 /** @brief The last complete frame's batches as JSON rows. A null @p out asks for the size. */
 PCSX2HOOK_API size_t pcsx2hook_get_gs_rows(pcsx2hook_ctx* ctx, uint32_t frame, char* out, size_t size);
 
