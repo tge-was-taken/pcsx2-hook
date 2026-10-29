@@ -45,6 +45,7 @@ namespace
 	std::atomic<size_t> s_burstWrite{0};
 	std::atomic<size_t> s_burstRead{0};
 	std::atomic<s64> s_gsBurst{-1};
+	std::atomic<s64> s_gsBatchBurst{-1};
 
 	u32 s_returnSentinel = 0;
 	u32 s_callMarker = 0;
@@ -255,6 +256,16 @@ void Hooks::PopGsPacketBurst()
 s64 Hooks::GetGsPacketBurst()
 {
 	return s_gsBurst.load(std::memory_order_relaxed);
+}
+
+void Hooks::NoteGsBatchStart()
+{
+	s_gsBatchBurst.store(s_gsBurst.load(std::memory_order_relaxed), std::memory_order_relaxed);
+}
+
+s64 Hooks::GetGsBatchBurst()
+{
+	return s_gsBatchBurst.load(std::memory_order_relaxed);
 }
 
 void Hooks::SetVu1UploadSink(Vu1UploadSink sink)

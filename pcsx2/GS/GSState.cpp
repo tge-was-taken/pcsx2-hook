@@ -2602,7 +2602,7 @@ void GSState::FlushPrim()
 				default: return fb->mem->ReadPixel32(x, y, fb->fbp, fb->fbw);
 			}
 		};
-		hookDraw.burst = Hooks::GetGsPacketBurst();
+		hookDraw.burst = Hooks::GetGsBatchBurst();
 		Hooks::OnGsDraw(hookDraw);
 #else
 		GL_REG("FlushPrim ctxt %d", PRIM->CTXT);
@@ -6092,6 +6092,10 @@ __forceinline void GSState::VertexKick(u32 skip)
 
 	if (idx_buff.tail == 0 /* && ((m_backed_up_ctx != m_env.PRIM.CTXT) || m_dirty_gs_regs)*/)
 	{
+#ifdef PCSX2HOOK
+		/* The batch opens here, so this is the burst it drew from. */
+		Hooks::NoteGsBatchStart();
+#endif
 		const int ctx = m_env.PRIM.CTXT;
 		std::memcpy(&m_prev_env, &m_env, 88);
 		std::memcpy(&m_prev_env.CTXT[ctx], &m_env.CTXT[ctx], 96);

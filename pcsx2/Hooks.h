@@ -190,6 +190,16 @@ namespace Hooks
 	void PopGsPacketBurst();
 	s64 GetGsPacketBurst();
 
+	/* Which burst a GS batch's own primitives arrived in, which is not the
+	 * packet being transferred when the batch flushes: the GS holds vertices
+	 * until a later register write dirties the state, and by then the next
+	 * packet's burst has been popped. NoteGsBatchStart is called where the
+	 * first primitive of a batch enters the index buffer, on the GS thread for
+	 * both the GS packet and the MTVU path, and GetGsBatchBurst is what the
+	 * flush stamps the batch with. */
+	void NoteGsBatchStart();
+	s64 GetGsBatchBurst();
+
 	using VifTagSink = void (*)(u32 tadr, u32 id, u32 madr, u32 qwc);
 	void SetVifTagSink(VifTagSink sink);
 	void OnVifTag(u32 tadr, u32 id, u32 madr, u32 qwc);
