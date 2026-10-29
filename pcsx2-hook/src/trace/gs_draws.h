@@ -35,6 +35,7 @@ public:
     void init();
     bool isEnabled();
     void setRecording(bool on);
+    uint64_t getUncountedBursts();
     uint32_t getStandaloneFrames();
     void close();
     size_t writeLastFrame(std::FILE* out);
@@ -55,6 +56,9 @@ private:
 
     std::FILE* mOut = nullptr;
     bool mRecording = false;
+    /* Batches drawn before the command stream counted its first burst, which
+     * nothing can join to a packet. */
+    uint64_t mUncountedBursts = 0;
     uint64_t mIndex = 0;
     uint64_t mFrameIndex = 0;
     std::atomic<uint32_t> mGsFrame{0};

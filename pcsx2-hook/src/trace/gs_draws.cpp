@@ -204,6 +204,15 @@ void GsDraws::onDraw(const Hooks::GsDraw& d) {
     if (!mRecording) {
         return;
     }
+    /* A batch drawn before the first burst was counted cannot be joined to the
+     * stream, and an ordinal of 0 on it would be a number that reads as an
+     * answer. Dropped, and counted, so the trace says how many it lost. Only
+     * where bursts are counted at all: without the command stream writer there
+     * is nothing to join to and the rows are still worth having. */
+    if (d.burst < 0 && GsStream::get().isEnabled()) {
+        mUncountedBursts++;
+        return;
+    }
     const uint64_t prim = d.prim, tex0 = d.tex0, tex1 = d.tex1, clamp = d.clamp;
     const uint64_t test = d.test, alpha = d.alpha, frame = d.frame, scissor = d.scissor;
     const float* bbox = d.bbox;
@@ -541,6 +550,10 @@ size_t GsDraws::writeLastFrame(std::FILE* out) {
     }
     return best->rows.size();
 }
+uint64_t GsDraws::getUncountedBursts() {
+    return mUncountedBursts;
+}
+
 void GsDraws::close() {
     const std::lock_guard<std::mutex> lock(mMutex);
     if (mOut) {
@@ -548,6 +561,10 @@ void GsDraws::close() {
                      static_cast<unsigned long long>(mIndex));
         std::fclose(mOut);
         mOut = nullptr;
+        if (mUncountedBursts) {
+            std::fprintf(stderr, "[gsdraw] %llu batches dropped, drawn before the first burst\n",
+                         (unsigned long long)mUncountedBursts);
+        }
     }
 }
 
