@@ -450,6 +450,69 @@ size_t pcsx2hook_read_gs_memory(pcsx2hook_ctx* ctx, void* out, size_t size) {
     return needed;
 }
 
+size_t pcsx2hook_read_gs_registers(pcsx2hook_ctx* ctx, void* out, size_t size) {
+    if (!ctx) return 0;
+    /* The draw environment, by GS register number. Per context registers are the pair, so the
+     * context register number is the first plus the context index. */
+    static const uint32_t kGlobal[] = {0x00, 0x1A, 0x1B, 0x1C, 0x22, 0x3B,
+                                       0x3D, 0x44, 0x45, 0x46, 0x49};
+    static const uint32_t kPerContext[] = {0x06, 0x08, 0x14, 0x18, 0x34, 0x36,
+                                           0x40, 0x42, 0x47, 0x4A, 0x4C, 0x4E};
+    const size_t count = std::size(kGlobal) + 2 * std::size(kPerContext);
+    const size_t needed = count * 16;
+    if (!out || size < needed) return needed;
+
+    bool ok = false;
+    MTGS::RunOnGSThread([&]() {
+        if (!g_gs_renderer) return;
+        const GSDrawingEnvironment& env = g_gs_renderer->m_env;
+        uint64_t values[0x50] = {};
+        values[0x00] = env.PRIM.U64;
+        values[0x1A] = env.PRMODECONT.U64;
+        values[0x1B] = env.PRMODE.U64;
+        values[0x1C] = env.TEXCLUT.U64;
+        values[0x22] = env.SCANMSK.U64;
+        values[0x3B] = env.TEXA.U64;
+        values[0x3D] = env.FOGCOL.U64;
+        values[0x44] = env.DIMX.U64;
+        values[0x45] = env.DTHE.U64;
+        values[0x46] = env.COLCLAMP.U64;
+        values[0x49] = env.PABE.U64;
+        for (uint32_t i = 0; i < 2; i++) {
+            const GSDrawingContext& c = env.CTXT[i];
+            values[0x06 + i] = c.TEX0.U64;
+            values[0x08 + i] = c.CLAMP.U64;
+            values[0x14 + i] = c.TEX1.U64;
+            values[0x18 + i] = c.XYOFFSET.U64;
+            values[0x34 + i] = c.MIPTBP1.U64;
+            values[0x36 + i] = c.MIPTBP2.U64;
+            values[0x40 + i] = c.SCISSOR.U64;
+            values[0x42 + i] = c.ALPHA.U64;
+            values[0x47 + i] = c.TEST.U64;
+            values[0x4A + i] = c.FBA.U64;
+            values[0x4C + i] = c.FRAME.U64;
+            values[0x4E + i] = c.ZBUF.U64;
+        }
+        uint64_t* write = static_cast<uint64_t*>(out);
+        for (uint32_t reg = 0; reg < 0x50; reg++) {
+            bool wanted = false;
+            for (const uint32_t at : kGlobal) wanted = wanted || at == reg;
+            for (const uint32_t at : kPerContext)
+                wanted = wanted || at == reg || at + 1 == reg;
+            if (!wanted) continue;
+            *write++ = values[reg];
+            *write++ = reg;
+        }
+        ok = true;
+    });
+    MTGS::WaitGS(false, false, false);
+    if (!ok) {
+        ctx->error = "no GS renderer to read from";
+        return 0;
+    }
+    return needed;
+}
+
 size_t pcsx2hook_get_gs_rows(pcsx2hook_ctx* ctx, uint32_t frame, char* out, size_t size) {
     if (!ctx) return 0;
     const std::string rows = Diagnostics::get().getGsDraws().getRowsForFrame(frame);

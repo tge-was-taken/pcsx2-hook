@@ -309,6 +309,24 @@ PCSX2HOOK_API size_t pcsx2hook_read_gs_pixels(pcsx2hook_ctx* ctx, uint32_t tbp0,
 PCSX2HOOK_API size_t pcsx2hook_read_gs_memory(pcsx2hook_ctx* ctx, void* out, size_t size);
 
 /**
+ * @brief Reads the GS's drawing environment as a GIF A+D list: the register file a draw reads.
+ *
+ * One quadword per register, the value in the low 64 bits and the register number in the high
+ * 64, which is the GIF's own A+D encoding, so a host replays them through whatever already
+ * handles a register write. 35 registers in ascending order: PRIM, PRMODECONT, PRMODE, TEXCLUT,
+ * SCANMSK, TEXA, FOGCOL, DIMX, DTHE, COLCLAMP, PABE, and per context TEX0, CLAMP, TEX1,
+ * XYOFFSET, MIPTBP1, MIPTBP2, SCISSOR, ALPHA, TEST, FBA, FRAME and ZBUF. The transfer registers
+ * are left out: they are the state of a transfer in flight, not of a draw.
+ *
+ * @param out Receives the quadwords, or null to ask for the size.
+ * @param size Bytes @p out can hold.
+ * @return Bytes the read needs, or 0 when there is no renderer.
+ * @note Runs on the GS thread and waits, like ::pcsx2hook_read_gs_memory, so it is the state
+ *       everything queued before the call left behind.
+ */
+PCSX2HOOK_API size_t pcsx2hook_read_gs_registers(pcsx2hook_ctx* ctx, void* out, size_t size);
+
+/**
  * @brief Opens a draw context that traced work is attributed to. Pair with ::pcsx2hook_pop_draw.
  * @note @p label keeps 31 characters. Work the guest kicks after the pop is unattributed.
  */
