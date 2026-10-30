@@ -513,6 +513,80 @@ size_t pcsx2hook_read_gs_registers(pcsx2hook_ctx* ctx, void* out, size_t size) {
     return needed;
 }
 
+int pcsx2hook_read_gs_display(pcsx2hook_ctx* ctx, pcsx2hook_gs_display* out) {
+    if (!ctx || !out) return 0;
+
+    bool ok = false;
+    pcsx2hook_gs_display got{};
+    MTGS::RunOnGSThread([&]() {
+        if (!g_gs_renderer || !g_gs_renderer->m_regs) return;
+        const GSPrivRegSet& regs = *g_gs_renderer->m_regs;
+        // The second circuit first, which is the one a game that uses only one enables.
+        for (int circuit = 1; circuit >= 0; circuit--) {
+            const bool enabled = circuit == 0 ? regs.PMODE.EN1 != 0 : regs.PMODE.EN2 != 0;
+            if (!enabled) continue;
+            const GSRegDISPLAY& display = regs.DISP[circuit].DISPLAY;
+            if (display.DW == 0 || display.DH == 0) continue;
+            const GSRegDISPFB& buffer = regs.DISP[circuit].DISPFB;
+            got.circuit = uint32_t(circuit);
+            got.block = buffer.Block();
+            got.fbw = buffer.FBW;
+            got.psm = buffer.PSM;
+            got.dbx = buffer.DBX;
+            got.dby = buffer.DBY;
+            got.magh = display.MAGH;
+            got.magv = display.MAGV;
+            got.width = uint32_t((display.DW + 1) / (display.MAGH + 1));
+            got.height = uint32_t((display.DH + 1) / (display.MAGV + 1));
+            ok = true;
+            break;
+        }
+    });
+    MTGS::WaitGS(false, false, false);
+    if (!ok) {
+        ctx->error = "no display circuit is reading a frame buffer";
+        return 0;
+    }
+    *out = got;
+    return 1;
+}
+
+size_t pcsx2hook_read_gs_frame(pcsx2hook_ctx* ctx, uint32_t block, uint32_t fbw, uint32_t psm,
+                               uint32_t x, uint32_t y, uint32_t width, uint32_t height,
+                               uint32_t* out, size_t count) {
+    if (!ctx) return 0;
+
+    const size_t needed = size_t(width) * height;
+    if (!out || count < needed) return needed;
+
+    bool ok = false;
+    MTGS::RunOnGSThread([&]() {
+        if (!g_gs_renderer) return;
+        const GSLocalMemory& mem = g_gs_renderer->m_mem;
+        for (uint32_t row = 0; row < height; row++) {
+            const int line = int(y + row);
+            for (uint32_t column = 0; column < width; column++) {
+                const int at = int(x + column);
+                uint32_t pixel;
+                switch (psm) {
+                    case PSMCT24: pixel = mem.ReadFrame24(at, line, block, fbw); break;
+                    case PSMCT16: pixel = mem.ReadFrame16(at, line, block, fbw); break;
+                    case PSMCT16S: pixel = mem.ReadFrame16S(at, line, block, fbw); break;
+                    default: pixel = mem.ReadPixel32(at, line, block, fbw); break;
+                }
+                out[size_t(row) * width + column] = pixel | 0xFF000000u;
+            }
+        }
+        ok = true;
+    });
+    MTGS::WaitGS(false, false, false);
+    if (!ok) {
+        ctx->error = "no GS renderer to read from";
+        return 0;
+    }
+    return needed;
+}
+
 size_t pcsx2hook_get_gs_rows(pcsx2hook_ctx* ctx, uint32_t frame, char* out, size_t size) {
     if (!ctx) return 0;
     const std::string rows = Diagnostics::get().getGsDraws().getRowsForFrame(frame);
@@ -614,9 +688,15 @@ int pcsx2hook_write_framebuffer(pcsx2hook_ctx* ctx, const char* path) {
         ctx->error = "the frame buffer changed size between the size query and the read";
         return 0;
     }
+    return pcsx2hook_write_png(ctx, path, pixels.data(), width, height);
+}
+
+int pcsx2hook_write_png(pcsx2hook_ctx* ctx, const char* path, const uint32_t* pixels,
+                        uint32_t width, uint32_t height) {
+    if (!ctx || !path || !pixels || width == 0 || height == 0) return 0;
     std::FILE* f = std::fopen(path, "wb");
     if (!f) {
-        ctx->error = "cannot open the frame buffer file";
+        ctx->error = "cannot open the picture file";
         return 0;
     }
     // Uncompressed PNG: stored deflate blocks need no compression library, so the runner gains a

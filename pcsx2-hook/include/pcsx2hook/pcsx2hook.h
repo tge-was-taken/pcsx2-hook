@@ -326,6 +326,59 @@ PCSX2HOOK_API size_t pcsx2hook_read_gs_memory(pcsx2hook_ctx* ctx, void* out, siz
  */
 PCSX2HOOK_API size_t pcsx2hook_read_gs_registers(pcsx2hook_ctx* ctx, void* out, size_t size);
 
+/** @brief The buffer the display circuit is reading, and the size it is shown at. */
+typedef struct
+{
+	uint32_t circuit; /**< 0 or 1, the circuit whose registers these are. */
+	uint32_t block;   /**< DISPFB's base in 64-word blocks, as TEX0 and FRAME state a base. */
+	uint32_t fbw;     /**< Buffer width in 64-pixel units. */
+	uint32_t psm;     /**< Pixel storage mode. */
+	uint32_t dbx;     /**< Where in the buffer the shown region starts. */
+	uint32_t dby;
+	uint32_t width;  /**< DISPLAY's own size, DW+1 over MAGH+1 by DH+1 over MAGV+1. */
+	uint32_t height; /**< Rows the circuit shows, which an interlaced pair of fields fills. */
+	uint32_t magh;
+	uint32_t magv;
+} pcsx2hook_gs_display;
+
+/**
+ * @brief Reads which frame buffer the display circuit shows. @return Non-zero on success.
+ * @note The circuit's base is not the one a chain draws into: a game that flips reads one buffer
+ *       while the GS writes the other, so this answers what is on screen while
+ *       ::pcsx2hook_read_gs_registers' FRAME answers where a draw lands.
+ */
+PCSX2HOOK_API int pcsx2hook_read_gs_display(pcsx2hook_ctx* ctx, pcsx2hook_gs_display* out);
+
+/**
+ * @brief Reads a frame buffer out of GS local memory, the way the display circuit reads one.
+ *
+ * ::pcsx2hook_read_gs_pixels answers with a texture's own values; this answers with pixels, so a
+ * 24 bit buffer comes back opaque rather than with the alpha the format does not carry.
+ *
+ * @param block Base in 64-word blocks, which is FRAME's FBP times 32.
+ * @param fbw Buffer width in 64-pixel units, as FRAME states it.
+ * @param psm GS pixel storage mode.
+ * @param x First column to read, @p y first row.
+ * @param width Pixels per row to read, @p height rows.
+ * @param out Receives width*height pixels as RGBA8, or null to ask for the count.
+ * @param count Pixels @p out can hold.
+ * @return Pixels the read needs, or 0 if there is no GS to read.
+ * @note Runs on the GS thread and waits, like ::pcsx2hook_read_gs_memory, so everything queued
+ *       before the call has been drawn into it.
+ */
+PCSX2HOOK_API size_t pcsx2hook_read_gs_frame(pcsx2hook_ctx* ctx, uint32_t block, uint32_t fbw,
+	uint32_t psm, uint32_t x, uint32_t y, uint32_t width, uint32_t height, uint32_t* out,
+	size_t count);
+
+/**
+ * @brief Writes RGBA8 pixels as an uncompressed PNG, the encoder ::pcsx2hook_write_framebuffer
+ *        uses. @return Non-zero on success.
+ * @note The alpha is dropped. A host that reads a buffer of its own choosing needs the same
+ *       encoder, and a second copy of it is a second thing to be wrong.
+ */
+PCSX2HOOK_API int pcsx2hook_write_png(pcsx2hook_ctx* ctx, const char* path,
+	const uint32_t* pixels, uint32_t width, uint32_t height);
+
 /**
  * @brief Opens a draw context that traced work is attributed to. Pair with ::pcsx2hook_pop_draw.
  * @note @p label keeps 31 characters. Work the guest kicks after the pop is unattributed.
