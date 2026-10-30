@@ -51,10 +51,30 @@ void GsStream::install() {
         mFrameLimit = u32(std::atoi(frames));
     }
 
+    if (const char* kicks = Config::get().getValue("PCSX2HOOK_GS_KICKS")) {
+        mKicks = std::fopen(kicks, "wb");
+        if (!mKicks) {
+            std::fprintf(stderr, "[gsstream] cannot open %s\n", kicks);
+        } else {
+            std::fprintf(stderr, "[gsstream] path 1 kick ordinals -> %s\n", kicks);
+        }
+    }
+
     s_instance = this;
     Hooks::SetGifTransferSink(&gifTransferSink);
     std::fprintf(stderr, "[gsstream] graphics command stream -> %s%s\n", path.c_str(),
                  mFrameLimit != 0 ? " (frame limited)" : "");
+}
+
+void GsStream::writeKick(u64 burst) {
+    /* Called with the lock held, from onTransfer. */
+    const std::int64_t kick = Hooks::GetVu1Kick();
+    if (kick < 0) {
+        mUnattributedKicks++;
+    }
+    std::fprintf(mKicks, "{\"burst\":%llu,\"kick\":%lld}\n", (unsigned long long)burst,
+                 (long long)kick);
+    mKickRows++;
 }
 
 void GsStream::onTransfer(u32 path, const u8* data, u32 bytes) {
@@ -83,6 +103,11 @@ void GsStream::onTransfer(u32 path, const u8* data, u32 bytes) {
     mBytes += bytes;
     // The ordinal of the burst just written, for the GS batches it draws.
     Hooks::SetGifBurst(std::int64_t(mTransfers) - 1);
+    // Path 1 is VU1's own output, so the burst belongs to the program start
+    // that ran the XGKICK. Paths 2 and 3 have no such thing.
+    if (mKicks && path == 1) {
+        writeKick(mTransfers - 1);
+    }
 }
 
 void GsStream::writeRegisters(const u8* registers) {
@@ -115,6 +140,12 @@ void GsStream::onVSync(int field) {
 
     std::fwrite(&id, 1, 1, mOut);
     std::fwrite(&fieldByte, 1, 1, mOut);
+    // A run with no frame limit never reaches close(), and the emulator's own
+    // shutdown ends in a signal, so the kick rows are flushed per frame rather
+    // than left in the buffer.
+    if (mKicks) {
+        std::fflush(mKicks);
+    }
     mFrames++;
     // A run without a frame limit is ended by the host rather than by this, and
     // the hook library has no shutdown of its own to close the file in, so the
@@ -135,6 +166,14 @@ void GsStream::close() {
     mOut = nullptr;
     std::fprintf(stderr, "[gsstream] %llu transfers, %llu bytes, %u frame(s)\n",
                  (unsigned long long)mTransfers, (unsigned long long)mBytes, mFrames);
+    if (mKicks) {
+        std::fclose(mKicks);
+        mKicks = nullptr;
+        std::fprintf(stderr, "[gsstream] %llu path 1 burst(s), %llu with no kick ordinal, "
+                             "%llu VU1 start(s) deferred to the VU thread\n",
+                     (unsigned long long)mKickRows, (unsigned long long)mUnattributedKicks,
+                     (unsigned long long)Hooks::GetVu1DeferredKicks());
+    }
 }
 
 }  // namespace pcsx2hook

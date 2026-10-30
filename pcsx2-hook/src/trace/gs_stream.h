@@ -41,6 +41,14 @@ public:
 
     void onTransfer(std::uint32_t path, const std::uint8_t* data, std::uint32_t bytes);
 
+    /* Which VU1 program start each path 1 burst was produced under, one JSON
+     * row per burst: {"burst":n,"kick":m}, both absolute over the run. A
+     * packet can hold several MSCALs and every XGKICK of each is a path 1
+     * burst, so the packet alone cannot say which program drew one. Written
+     * only when PCSX2HOOK_GS_KICKS names a file, and never into stream.bin,
+     * whose format does not change. */
+    void writeKick(std::uint64_t burst);
+
     /* Transfers written so far. The GIF is fed from the EE thread, so a hook
      * handler on that thread reads the ordinal of the next transfer and can
      * cut the file at a point of its own rather than at a frame boundary. */
@@ -58,6 +66,9 @@ private:
      * not, which is a worse failure than a dropped record. */
     std::mutex mLock;
     std::FILE* mOut = nullptr;
+    std::FILE* mKicks = nullptr;
+    std::uint64_t mKickRows = 0;
+    std::uint64_t mUnattributedKicks = 0;
     std::uint64_t mTransfers = 0;
     std::uint64_t mBytes = 0;
     std::uint32_t mFrames = 0;

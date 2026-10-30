@@ -46,6 +46,8 @@ namespace
 	std::atomic<size_t> s_burstRead{0};
 	std::atomic<s64> s_gsBurst{-1};
 	std::atomic<s64> s_gsBatchBurst{-1};
+	std::atomic<s64> s_vu1Kick{-1};
+	std::atomic<u64> s_vu1Deferred{0};
 
 	u32 s_returnSentinel = 0;
 	u32 s_callMarker = 0;
@@ -266,6 +268,28 @@ void Hooks::NoteGsBatchStart()
 s64 Hooks::GetGsBatchBurst()
 {
 	return s_gsBatchBurst.load(std::memory_order_relaxed);
+}
+
+void Hooks::NoteVu1Kick(bool deferred)
+{
+	if (deferred)
+	{
+		s_vu1Deferred.fetch_add(1, std::memory_order_relaxed);
+		return;
+	}
+	s_vu1Kick.fetch_add(1, std::memory_order_relaxed);
+}
+
+s64 Hooks::GetVu1Kick()
+{
+	if (s_vu1Deferred.load(std::memory_order_relaxed) != 0)
+		return -1;
+	return s_vu1Kick.load(std::memory_order_relaxed);
+}
+
+u64 Hooks::GetVu1DeferredKicks()
+{
+	return s_vu1Deferred.load(std::memory_order_relaxed);
 }
 
 void Hooks::SetVu1UploadSink(Vu1UploadSink sink)

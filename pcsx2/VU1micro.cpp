@@ -51,6 +51,12 @@ void vu1Finish(bool add_cycles) {
 
 void vu1ExecMicro(u32 addr)
 {
+#ifdef PCSX2HOOK
+	// The VU1 program start MSCAL, MSCALF and MSCNT all reach, and VU0's
+	// CALLMSR with it. Counted here and not at the VIF command so one place
+	// covers every start, and before the MTVU branch so none is missed.
+	Hooks::NoteVu1Kick(THREAD_VU1 != 0);
+#endif
 	if (THREAD_VU1) {
 		VU0.VI[REG_VPU_STAT].UL &= ~0xFF00;
 		// Okay this is a little bit of a hack, but with good reason.

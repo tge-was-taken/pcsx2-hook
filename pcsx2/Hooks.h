@@ -200,6 +200,19 @@ namespace Hooks
 	void NoteGsBatchStart();
 	s64 GetGsBatchBurst();
 
+	/* Which VU1 program start a path 1 burst was produced under.
+	 *
+	 * One packet can hold several MSCALs, and every XGKICK of the program they
+	 * start is a path 1 burst, so a burst's packet does not say which of them
+	 * drew it. NoteVu1Kick is called at each VU1 program start and counts from
+	 * 0; GetVu1Kick is the ordinal in force. With MTVU the program runs on the
+	 * VU thread and its bursts arrive after the counter has moved on, so a
+	 * deferred start poisons the answer to -1 rather than letting a plausible
+	 * ordinal be recorded. */
+	void NoteVu1Kick(bool deferred);
+	s64 GetVu1Kick();
+	u64 GetVu1DeferredKicks();
+
 	using VifTagSink = void (*)(u32 tadr, u32 id, u32 madr, u32 qwc);
 	void SetVifTagSink(VifTagSink sink);
 	void OnVifTag(u32 tadr, u32 id, u32 madr, u32 qwc);
