@@ -249,6 +249,13 @@ PCSX2HOOK_API uint32_t pcsx2hook_get_ee_pc(pcsx2hook_ctx* ctx);
 /** @brief The disc serial, such as @c "SLUS-21621". Empty before boot, owned by the context. */
 PCSX2HOOK_API const char* pcsx2hook_get_disc_serial(pcsx2hook_ctx* ctx);
 
+/** @brief The rounding mode the emulated unit runs under: 0 nearest, 1 toward
+ *  negative, 2 toward positive, 3 chop, and -1 for a name this does not know.
+ *  @p which is @c "ee", @c "eediv", @c "vu0" or @c "vu1". The game database
+ *  overrides the EE's per title, so a capture that is a float reference has to
+ *  record what it ran under rather than assume the default. */
+PCSX2HOOK_API int pcsx2hook_get_round_mode(pcsx2hook_ctx* ctx, const char* which);
+
 /** @brief Boots this ELF instead of the disc's own, with the disc still mounted. */
 PCSX2HOOK_API void pcsx2hook_set_boot_elf(pcsx2hook_ctx* ctx, const char* path);
 

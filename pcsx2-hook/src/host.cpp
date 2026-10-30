@@ -11,6 +11,7 @@
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <ctime>
 #include <filesystem>
 #include <mutex>
@@ -25,6 +26,7 @@
 #include "common/CocoaTools.h"
 #include "common/Console.h"
 #include "common/CrashHandler.h"
+#include "common/FPControl.h"
 #include "common/FileSystem.h"
 #include "common/MemorySettingsInterface.h"
 #include "common/Path.h"
@@ -776,6 +778,57 @@ bool GSRunner::ParseCommandLineArgs(int argc, char* argv[], VMBootParameters& pa
     return true;
 }
 
+/* The rounding mode the EE FPU and the two VUs run under, named rather than
+ * left to the game database. PCSX2's own default is chop for all three, which
+ * is what the hardware does, but the database overrides the EE's per title:
+ * SLUS-20911 asks for nearest against a ladder glitch, and a capture used as a
+ * reference for ported code then carries EE floats the port cannot reproduce.
+ * Naming a mode here also turns the database's core fixes off, because they are
+ * applied after the settings and would win.
+ */
+static bool roundModeFromName(const char* aName, int* aMode) {
+    if (std::strcmp(aName, "nearest") == 0) *aMode = static_cast<int>(FPRoundMode::Nearest);
+    else if (std::strcmp(aName, "negative") == 0) *aMode = static_cast<int>(FPRoundMode::NegativeInfinity);
+    else if (std::strcmp(aName, "positive") == 0) *aMode = static_cast<int>(FPRoundMode::PositiveInfinity);
+    else if (std::strcmp(aName, "chop") == 0) *aMode = static_cast<int>(FPRoundMode::ChopZero);
+    else return false;
+    return true;
+}
+
+static void applyRoundModes(MemorySettingsInterface& si) {
+    static const struct {
+        const char* var;
+        const char* key;
+    } kWhich[] = {
+        {"PCSX2HOOK_EE_ROUND", "FPU.Roundmode"},
+        {"PCSX2HOOK_EE_DIV_ROUND", "FPUDiv.Roundmode"},
+        {"PCSX2HOOK_VU0_ROUND", "VU0.Roundmode"},
+        {"PCSX2HOOK_VU1_ROUND", "VU1.Roundmode"},
+    };
+    bool named = false;
+
+    for (const auto& which : kWhich) {
+        const char* name = pcsx2hook::Config::get().getValue(which.var);
+        int mode = 0;
+
+        if (!name || !*name) continue;
+        if (!roundModeFromName(name, &mode)) {
+            std::fprintf(stderr, "[hook] %s is not nearest, negative, positive or chop: %s\n",
+                         which.var, name);
+            continue;
+        }
+        si.SetIntValue("EmuCore/CPU", which.key, mode);
+        /* stderr and not Console: this runs before the VM sets logging up from
+         * the settings, where a Console line is dropped. */
+        std::fprintf(stderr, "[hook] %s set to %d [%s]\n", which.key, mode, name);
+        named = true;
+    }
+    if (named) {
+        si.SetBoolValue("EmuCore", "EnableGameFixes", false);
+        std::fprintf(stderr, "[hook] game fixes off, so the named rounding modes stand\n");
+    }
+}
+
 void GSRunner::SettingsOverride() {
     s_settings_interface.SetBoolValue("EmuCore/GS", "FrameLimitEnable", false);
     s_settings_interface.SetIntValue("EmuCore/GS", "VsyncEnable", false);
@@ -790,6 +843,7 @@ void GSRunner::SettingsOverride() {
     s_settings_interface.SetStringValue("SPU2/Output", "OutputModule", "nullout");
 
     s_core->applyHeadlessSettings(s_settings_interface);
+    applyRoundModes(s_settings_interface);
 
     Pad::ClearPortBindings(s_settings_interface, 0);
     s_settings_interface.ClearSection("Hotkeys");

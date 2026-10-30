@@ -830,6 +830,15 @@ void pcsx2hook_set_dma_kick_sink(pcsx2hook_ctx* ctx, pcsx2hook_dma_kick_fn fn, v
     Hooks::AddDmaKickSink(&dmaKickTrampoline);
 }
 
+int pcsx2hook_get_round_mode(pcsx2hook_ctx* ctx, const char* which) {
+    if (!ctx || !which) return -1;
+    if (std::strcmp(which, "ee") == 0) return static_cast<int>(EmuConfig.Cpu.FPUFPCR.GetRoundMode());
+    if (std::strcmp(which, "eediv") == 0) return static_cast<int>(EmuConfig.Cpu.FPUDivFPCR.GetRoundMode());
+    if (std::strcmp(which, "vu0") == 0) return static_cast<int>(EmuConfig.Cpu.VU0FPCR.GetRoundMode());
+    if (std::strcmp(which, "vu1") == 0) return static_cast<int>(EmuConfig.Cpu.VU1FPCR.GetRoundMode());
+    return -1;
+}
+
 uint64_t pcsx2hook_get_gs_stream_transfers(pcsx2hook_ctx* ctx) {
     if (!ctx) return 0;
     return GsStream::get().getTransfers();
