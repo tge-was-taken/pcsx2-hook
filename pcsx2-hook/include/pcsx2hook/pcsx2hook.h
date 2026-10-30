@@ -398,6 +398,52 @@ PCSX2HOOK_API size_t pcsx2hook_read_gs_frame(pcsx2hook_ctx* ctx, uint32_t block,
 PCSX2HOOK_API int pcsx2hook_write_png(pcsx2hook_ctx* ctx, const char* path,
 	const uint32_t* pixels, uint32_t width, uint32_t height);
 
+/** @brief One snapshot of a draw target, taken on the GS thread after a named batch drew. */
+typedef struct
+{
+	uint64_t burst;  /**< The GIF burst the batch's primitives arrived in, as asked for. */
+	uint32_t block;  /**< The batch's own FRAME: base in 64-word blocks, width, storage mode. */
+	uint32_t fbw;
+	uint32_t psm;
+	uint32_t width;  /**< Pixels per row handed over, @p height rows, in @p pixels as RGBA8 with
+	                      the alpha GS memory holds. */
+	uint32_t height;
+	uint32_t field;  /**< CSR's FIELD at the snapshot, which is the field on screen now and so the
+	                      other one from the field this chain is drawing. */
+	uint32_t skipped; /**< The batch was suppressed, so the buffer did not change. */
+	const uint32_t* pixels; /**< Valid for the call only. */
+} pcsx2hook_gs_snap;
+
+/**
+ * @brief Takes a snapshot of the draw target after each batch whose burst ::PCSX2HOOK_GS_SNAP_AT
+ *        names, and hands it to @p sink.
+ *
+ * The frame reader answers what a chain left; this answers what one batch of it left, which is the
+ * only way to see a value a later batch of the same chain writes over, such as the destination
+ * alpha a stencil pass marks and the quad after it consumes.
+ *
+ * `PCSX2HOOK_GS_SNAP_AT` is a comma-separated list of absolute GIF burst ordinals, the ones the GS
+ * trace's rows and the kick rows carry. Each is taken once, at the first batch of that burst.
+ *
+ * @note The sink runs on the GS thread with the rasteriser drained, inside the flush, so it must
+ *       not call back into this API: everything here that reads the GS queues onto that thread and
+ *       would deadlock. Write the pixels and return.
+ */
+PCSX2HOOK_API void pcsx2hook_set_gs_snap_sink(pcsx2hook_ctx* ctx,
+	void (*sink)(const pcsx2hook_gs_snap* snap, void* user), void* user);
+
+/**
+ * @brief Adds burst ordinals to snapshot after, the same ones ::PCSX2HOOK_GS_SNAP_AT names.
+ *
+ * `PCSX2HOOK_GS_SNAP_AT` is read once, before the VM runs, so it can only carry an ordinal the
+ * host knew then. **An absolute ordinal is not reproducible across runs of the same scene**: the
+ * bursts the console's own boot sends vary, and the same frame of the same route measured 304
+ * apart on two runs of SMT3's opening field. What is stable is a burst's offset inside a frame's
+ * own chain, so a host that addresses a batch that way resolves the ordinal when the chain is
+ * kicked and arms it here.
+ */
+PCSX2HOOK_API void pcsx2hook_arm_gs_snap(pcsx2hook_ctx* ctx, const uint64_t* bursts, size_t count);
+
 /**
  * @brief Writes one byte per pixel as an 8 bit greyscale uncompressed PNG. @return Non-zero on
  *        success.

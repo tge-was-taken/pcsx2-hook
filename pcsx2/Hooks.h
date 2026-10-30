@@ -163,6 +163,24 @@ namespace Hooks
 	bool HasVuMemSink();
 	void OnVuMem(u32 unit, u32 addr);
 
+	/* A batch after it has drawn, which OnGsDraw cannot be: that fires before
+	 * the rasteriser runs, so a sink reading the frame buffer there reads the
+	 * state the batch tested against and never the state it left. Call
+	 * syncPixels once before reading, as with GsDraw: the software rasteriser
+	 * draws on worker threads. */
+	struct GsDrawDone
+	{
+		s64 burst;
+		u64 frame; // the batch's own FRAME register
+		u32 skipped; // the draw was suppressed, so the buffer did not change
+		void (*syncPixels)(const void* ctx);
+		const void* readCtx;
+	};
+	using GsDrawDoneSink = void (*)(const GsDrawDone& done);
+	void SetGsDrawDoneSink(GsDrawDoneSink sink);
+	bool HasGsDrawDoneSink();
+	void OnGsDrawDone(const GsDrawDone& done);
+
 	using GsDrawSink = void (*)(const GsDraw& draw);
 	using GsVSyncSink = void (*)();
 	void SetGsVSyncSink(GsVSyncSink sink);

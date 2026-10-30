@@ -35,6 +35,8 @@ namespace
 	Hooks::VifTagSink s_vifTagSink = nullptr;
 	Hooks::VifCodeSink s_vifCodeSink = nullptr;
 	Hooks::GsVSyncSink s_gsVSyncSink = nullptr;
+	/* Armed mid-run, at a chain's kick on the EE thread, and read on the GS thread. */
+	std::atomic<Hooks::GsDrawDoneSink> s_gsDrawDoneSink{nullptr};
 	Hooks::GifTransferSink s_gifTransferSink = nullptr;
 
 	/* One slot per GS packet in flight. The EE writes and the GS reads, one
@@ -232,6 +234,22 @@ void Hooks::OnGifTransfer(u32 path, const u8* data, u32 bytes)
 {
 	if (s_gifTransferSink)
 		s_gifTransferSink(path, data, bytes);
+}
+
+void Hooks::SetGsDrawDoneSink(GsDrawDoneSink sink)
+{
+	s_gsDrawDoneSink.store(sink, std::memory_order_release);
+}
+
+bool Hooks::HasGsDrawDoneSink()
+{
+	return s_gsDrawDoneSink.load(std::memory_order_acquire) != nullptr;
+}
+
+void Hooks::OnGsDrawDone(const GsDrawDone& done)
+{
+	if (GsDrawDoneSink sink = s_gsDrawDoneSink.load(std::memory_order_acquire))
+		sink(done);
 }
 
 void Hooks::SetGifBurst(s64 ordinal)

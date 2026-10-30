@@ -5,7 +5,9 @@
 
 #include <atomic>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -558,6 +560,32 @@ int pcsx2hook_read_gs_display(pcsx2hook_ctx* ctx, pcsx2hook_gs_display* out) {
     return 1;
 }
 
+/* The alpha byte is the one GS memory holds, in the GS's own units where 128 is opaque: a
+ * destination alpha test reads it, so forcing it opaque would hide the test's input. The 24 and 16
+ * bit readers supply the alpha their format does not store, 128 and the 1 bit value scaled, which
+ * is what the GS itself reads. Runs on the GS thread, wherever it is called from.
+ *
+ * C linkage, like everything else in this block, so the name carries the prefix a namespace would
+ * have given it. */
+void pcsx2hookReadGsFrameHere(uint32_t block, uint32_t fbw, uint32_t psm, uint32_t x, uint32_t y,
+                     uint32_t width, uint32_t height, uint32_t* out) {
+    const GSLocalMemory& mem = g_gs_renderer->m_mem;
+    for (uint32_t row = 0; row < height; row++) {
+        const int line = int(y + row);
+        for (uint32_t column = 0; column < width; column++) {
+            const int at = int(x + column);
+            uint32_t pixel;
+            switch (psm) {
+                case PSMCT24: pixel = mem.ReadFrame24(at, line, block, fbw); break;
+                case PSMCT16: pixel = mem.ReadFrame16(at, line, block, fbw); break;
+                case PSMCT16S: pixel = mem.ReadFrame16S(at, line, block, fbw); break;
+                default: pixel = mem.ReadPixel32(at, line, block, fbw); break;
+            }
+            out[size_t(row) * width + column] = pixel;
+        }
+    }
+}
+
 size_t pcsx2hook_read_gs_frame(pcsx2hook_ctx* ctx, uint32_t block, uint32_t fbw, uint32_t psm,
                                uint32_t x, uint32_t y, uint32_t width, uint32_t height,
                                uint32_t* out, size_t count) {
@@ -569,25 +597,7 @@ size_t pcsx2hook_read_gs_frame(pcsx2hook_ctx* ctx, uint32_t block, uint32_t fbw,
     bool ok = false;
     MTGS::RunOnGSThread([&]() {
         if (!g_gs_renderer) return;
-        const GSLocalMemory& mem = g_gs_renderer->m_mem;
-        /* The alpha byte is the one GS memory holds, in the GS's own units where 128 is opaque: a
-         * destination alpha test reads it, so forcing it opaque would hide the test's input. The
-         * 24 and 16 bit readers supply the alpha their format does not store, 128 and the 1 bit
-         * value scaled, which is what the GS itself reads. */
-        for (uint32_t row = 0; row < height; row++) {
-            const int line = int(y + row);
-            for (uint32_t column = 0; column < width; column++) {
-                const int at = int(x + column);
-                uint32_t pixel;
-                switch (psm) {
-                    case PSMCT24: pixel = mem.ReadFrame24(at, line, block, fbw); break;
-                    case PSMCT16: pixel = mem.ReadFrame16(at, line, block, fbw); break;
-                    case PSMCT16S: pixel = mem.ReadFrame16S(at, line, block, fbw); break;
-                    default: pixel = mem.ReadPixel32(at, line, block, fbw); break;
-                }
-                out[size_t(row) * width + column] = pixel;
-            }
-        }
+        pcsx2hookReadGsFrameHere(block, fbw, psm, x, y, width, height, out);
         ok = true;
     });
     MTGS::WaitGS(false, false, false);
@@ -596,6 +606,140 @@ size_t pcsx2hook_read_gs_frame(pcsx2hook_ctx* ctx, uint32_t block, uint32_t fbw,
         return 0;
     }
     return needed;
+}
+
+namespace {
+
+/* The draw target after one named batch of a chain, which no reader at a frame boundary can hold:
+ * a later batch of the same chain writes over what the question is about. The bursts come from
+ * PCSX2HOOK_GS_SNAP_AT and each is taken once. */
+struct GsSnap {
+    /* The host arms a frame's batches at its kick, on the EE thread, while the GS thread is still
+     * drawing the chain before it, so the two lists are locked. The pixel buffer is not: only the
+     * sink touches it. */
+    std::mutex lock;
+    std::vector<uint64_t> wanted;
+    std::vector<uint8_t> taken;
+    std::atomic<void (*)(const pcsx2hook_gs_snap*, void*)> sink{nullptr};
+    void* user = nullptr;
+    std::vector<uint32_t> pixels;
+};
+
+GsSnap s_snap;
+
+/* The drawn field: the display's own width, and half its height when the read circuit is in field
+ * mode, which is what says a buffer holds one field rather than a whole frame.
+ *
+ * Not the distance between the drawn base and the displayed one, which is how the frame reader at a
+ * vsync tells a field pair from a single buffer: mid-chain DISPFB has not flipped yet and can still
+ * name the buffer being drawn into, and the read then takes the field below it as well. Measured on
+ * frame 0 of SMT3's opening field, where it read 448 rows of a 224 row target and the lower half
+ * held the other buffer. SMODE2 is a mode register and does not move inside a frame. */
+void snapGeometry(uint32_t block, uint32_t psm, uint32_t* width, uint32_t* height,
+                  uint32_t* field) {
+    (void)block;
+    (void)psm;
+    *width = 0;
+    *height = 0;
+    *field = 0;
+    if (!g_gs_renderer || !g_gs_renderer->m_regs) return;
+    const GSPrivRegSet& regs = *g_gs_renderer->m_regs;
+    *field = regs.CSR.rFIELD;
+    for (int circuit = 1; circuit >= 0; circuit--) {
+        const bool enabled = circuit == 0 ? regs.PMODE.EN1 != 0 : regs.PMODE.EN2 != 0;
+        if (!enabled) continue;
+        const GSRegDISPLAY& display = regs.DISP[circuit].DISPLAY;
+        if (display.DW == 0 || display.DH == 0) continue;
+        const uint32_t shownWidth = uint32_t((display.DW + 1) / (display.MAGH + 1));
+        const uint32_t shownHeight = uint32_t((display.DH + 1) / (display.MAGV + 1));
+        const bool oneField = regs.SMODE2.INT != 0 && regs.SMODE2.FFMD != 0;
+        *width = shownWidth;
+        *height = oneField ? shownHeight / 2 : shownHeight;
+        return;
+    }
+}
+
+void gsDrawDoneSink(const Hooks::GsDrawDone& done) {
+    void (*sink)(const pcsx2hook_gs_snap*, void*) = s_snap.sink.load(std::memory_order_acquire);
+    if (!sink || done.burst < 0) return;
+    size_t which = 0;
+    {
+        const std::lock_guard<std::mutex> held(s_snap.lock);
+        which = s_snap.wanted.size();
+        for (size_t i = 0; i < s_snap.wanted.size(); i++) {
+            if (s_snap.wanted[i] == uint64_t(done.burst) && !s_snap.taken[i]) which = i;
+        }
+        if (which == s_snap.wanted.size()) return;
+        /* Claimed under the lock, so one batch is taken once even if the burst names several. */
+        s_snap.taken[which] = 1;
+    }
+
+    const uint32_t block = uint32_t(done.frame & 0x1FF) * 32;
+    const uint32_t fbw = uint32_t((done.frame >> 16) & 0x3F);
+    const uint32_t psm = uint32_t((done.frame >> 24) & 0x3F);
+    uint32_t width = 0;
+    uint32_t height = 0;
+    uint32_t field = 0;
+    snapGeometry(block, psm, &width, &height, &field);
+    if (!fbw || !width || !height) {
+        std::fprintf(stderr, "[gssnap] burst %lld: FRAME %016llX against a %ux%u display\n",
+                     (long long)done.burst, (unsigned long long)done.frame, width, height);
+        return;
+    }
+    // The software rasteriser draws on worker threads, so the batch is not in memory until this.
+    if (done.syncPixels) done.syncPixels(done.readCtx);
+
+    s_snap.pixels.resize(size_t(width) * height);
+    pcsx2hookReadGsFrameHere(block, fbw, psm, 0, 0, width, height, s_snap.pixels.data());
+
+    pcsx2hook_gs_snap out{};
+    out.burst = uint64_t(done.burst);
+    out.block = block;
+    out.fbw = fbw;
+    out.psm = psm;
+    out.width = width;
+    out.height = height;
+    out.field = field;
+    out.skipped = done.skipped;
+    out.pixels = s_snap.pixels.data();
+    sink(&out, s_snap.user);
+}
+
+}  // namespace
+
+void pcsx2hookInstallGsSnap() {
+    const char* at = Config::get().getValue("PCSX2HOOK_GS_SNAP_AT");
+    if (!at || !*at) return;
+    std::vector<uint64_t> bursts;
+    for (const char* walk = at; *walk;) {
+        bursts.push_back(std::strtoull(walk, nullptr, 10));
+        const char* comma = std::strchr(walk, ',');
+        walk = comma ? comma + 1 : walk + std::strlen(walk);
+    }
+    pcsx2hook_arm_gs_snap(nullptr, bursts.data(), bursts.size());
+}
+
+void pcsx2hook_arm_gs_snap(pcsx2hook_ctx* ctx, const uint64_t* bursts, size_t count) {
+    (void)ctx;
+    if (!bursts || !count) return;
+    {
+        const std::lock_guard<std::mutex> held(s_snap.lock);
+        for (size_t i = 0; i < count; i++) {
+            s_snap.wanted.push_back(bursts[i]);
+            s_snap.taken.push_back(0);
+            std::fprintf(stderr, "[gssnap] snapshot after the batch of burst %llu\n",
+                         (unsigned long long)bursts[i]);
+        }
+    }
+    Hooks::SetGsDrawDoneSink(&gsDrawDoneSink);
+}
+
+void pcsx2hook_set_gs_snap_sink(pcsx2hook_ctx* ctx,
+                                void (*sink)(const pcsx2hook_gs_snap* snap, void* user),
+                                void* user) {
+    if (!ctx) return;
+    s_snap.user = user;
+    s_snap.sink.store(sink, std::memory_order_release);
 }
 
 size_t pcsx2hook_get_gs_rows(pcsx2hook_ctx* ctx, uint32_t frame, char* out, size_t size) {

@@ -2750,6 +2750,34 @@ void GSState::FlushPrim()
 		if (!skip_draw)
 			Draw();
 
+#ifdef PCSX2HOOK
+		if (Hooks::HasGsDrawDoneSink())
+		{
+			struct HookDoneRead
+			{
+				GSState* state;
+				u32 fbp, fbw, psm;
+			};
+			static thread_local HookDoneRead hookDoneFb;
+			hookDoneFb = HookDoneRead{this, m_context->FRAME.Block(), m_context->FRAME.FBW,
+				m_context->FRAME.PSM};
+			Hooks::GsDrawDone hookDone{};
+			hookDone.burst = Hooks::GetGsBatchBurst();
+			hookDone.frame = m_context->FRAME.U64;
+			hookDone.skipped = skip_draw ? 1u : 0u;
+			hookDone.readCtx = &hookDoneFb;
+			hookDone.syncPixels = [](const void* ctx) {
+				const HookDoneRead* fb = static_cast<const HookDoneRead*>(ctx);
+				GIFRegBITBLTBUF hookBuf = {};
+				hookBuf.SBP = fb->fbp;
+				hookBuf.SBW = fb->fbw;
+				hookBuf.SPSM = fb->psm;
+				fb->state->InvalidateLocalMem(hookBuf, GSVector4i(0, 0, int(fb->fbw) * 64, 2048));
+			};
+			Hooks::OnGsDrawDone(hookDone);
+		}
+#endif
+
 		g_perfmon.Put(GSPerfMon::Draw, 1);
 		g_perfmon.Put(GSPerfMon::Prim, idx_buff.tail / GSUtil::GetVertexCount(PRIM->PRIM));
 

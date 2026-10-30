@@ -25,6 +25,9 @@
 #include "pcsx2/Hooks.h"
 #include "trace/vif_trace.h"
 
+/* api.cpp's, beside the frame reader it shares. C linkage, like the rest of that file. */
+extern "C" void pcsx2hookInstallGsSnap();
+
 namespace pcsx2hook {
 void GsDraws::dumpDrawBuffer(const Hooks::GsDraw& d, uint64_t batch, uint32_t frame) {
     if (!d.readPixel) {
@@ -414,6 +417,9 @@ void GsDraws::init() {
     }
     Hooks::SetGsDrawSink(&gsDrawSink);
     Hooks::SetGsVSyncSink(&gsVSyncSink);
+    // Independent of this trace as well: it reads the target after one batch of a chain rather
+    // than per batch, and PCSX2HOOK_GS_SNAP_AT alone turns it on.
+    pcsx2hookInstallGsSnap();
     // Independent of this trace: its frame boundary is the EE-side one in
     // Core::onFrame, so only the file is opened here.
     GsStream::get().install();
