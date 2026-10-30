@@ -536,6 +536,13 @@ int pcsx2hook_read_gs_display(pcsx2hook_ctx* ctx, pcsx2hook_gs_display* out) {
             got.dby = buffer.DBY;
             got.magh = display.MAGH;
             got.magv = display.MAGV;
+            got.dx = display.DX;
+            got.dy = display.DY;
+            got.dw = display.DW;
+            got.dh = display.DH;
+            got.interlace = regs.SMODE2.INT;
+            got.ffmd = regs.SMODE2.FFMD;
+            got.field = regs.CSR.rFIELD;
             got.width = uint32_t((display.DW + 1) / (display.MAGH + 1));
             got.height = uint32_t((display.DH + 1) / (display.MAGV + 1));
             ok = true;

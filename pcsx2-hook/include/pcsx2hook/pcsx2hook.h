@@ -346,6 +346,14 @@ typedef struct
 	uint32_t height; /**< Rows the circuit shows, which an interlaced pair of fields fills. */
 	uint32_t magh;
 	uint32_t magv;
+	uint32_t dx; /**< DISPLAY's own position on the screen, DX in VCK units and DY in scanlines. */
+	uint32_t dy;
+	uint32_t dw; /**< DISPLAY's DW and DH as stated, before MAGH and MAGV divide them. */
+	uint32_t dh;
+	uint32_t interlace; /**< SMODE2's INT, the interlaced output. */
+	uint32_t ffmd;  /**< SMODE2's FFMD: 0 reads every other row of the buffer per field, 1 every
+	                     row, so a FFMD 1 pair of buffers is woven by the field's own parity. */
+	uint32_t field; /**< CSR's FIELD at the read, the field the circuit is showing. */
 } pcsx2hook_gs_display;
 
 /**
