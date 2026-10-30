@@ -563,6 +563,10 @@ size_t pcsx2hook_read_gs_frame(pcsx2hook_ctx* ctx, uint32_t block, uint32_t fbw,
     MTGS::RunOnGSThread([&]() {
         if (!g_gs_renderer) return;
         const GSLocalMemory& mem = g_gs_renderer->m_mem;
+        /* The alpha byte is the one GS memory holds, in the GS's own units where 128 is opaque: a
+         * destination alpha test reads it, so forcing it opaque would hide the test's input. The
+         * 24 and 16 bit readers supply the alpha their format does not store, 128 and the 1 bit
+         * value scaled, which is what the GS itself reads. */
         for (uint32_t row = 0; row < height; row++) {
             const int line = int(y + row);
             for (uint32_t column = 0; column < width; column++) {
@@ -574,7 +578,7 @@ size_t pcsx2hook_read_gs_frame(pcsx2hook_ctx* ctx, uint32_t block, uint32_t fbw,
                     case PSMCT16S: pixel = mem.ReadFrame16S(at, line, block, fbw); break;
                     default: pixel = mem.ReadPixel32(at, line, block, fbw); break;
                 }
-                out[size_t(row) * width + column] = pixel | 0xFF000000u;
+                out[size_t(row) * width + column] = pixel;
             }
         }
         ok = true;
@@ -654,7 +658,8 @@ void putIdat(std::FILE* f, const std::vector<uint8_t>& raw) {
     putChunk(f, "IDAT", z);
 }
 
-void writePng(std::FILE* f, uint32_t width, uint32_t height, const std::vector<uint8_t>& raw) {
+void writePng(std::FILE* f, uint32_t width, uint32_t height, const std::vector<uint8_t>& raw,
+              uint8_t colour = 2) {
     static const uint8_t signature[8] = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'};
     std::fwrite(signature, 1, sizeof(signature), f);
 
@@ -662,7 +667,7 @@ void writePng(std::FILE* f, uint32_t width, uint32_t height, const std::vector<u
     putBe32(ihdr, width);
     putBe32(ihdr, height);
     ihdr.push_back(8);  // bit depth
-    ihdr.push_back(2);  // truecolour
+    ihdr.push_back(colour);  // 2 truecolour, 0 greyscale
     ihdr.push_back(0);
     ihdr.push_back(0);
     ihdr.push_back(0);
@@ -713,6 +718,25 @@ int pcsx2hook_write_png(pcsx2hook_ctx* ctx, const char* path, const uint32_t* pi
         }
     }
     writePng(f, width, height, raw);
+    std::fclose(f);
+    return 1;
+}
+
+int pcsx2hook_write_png_gray(pcsx2hook_ctx* ctx, const char* path, const uint8_t* values,
+                             uint32_t width, uint32_t height) {
+    if (!ctx || !path || !values || width == 0 || height == 0) return 0;
+    std::FILE* f = std::fopen(path, "wb");
+    if (!f) {
+        ctx->error = "cannot open the picture file";
+        return 0;
+    }
+    std::vector<uint8_t> raw;
+    raw.reserve(size_t(height) * (1 + size_t(width)));
+    for (uint32_t y = 0; y < height; y++) {
+        raw.push_back(0);  // filter: none
+        raw.insert(raw.end(), values + size_t(y) * width, values + size_t(y + 1) * width);
+    }
+    writePng(f, width, height, raw, 0);
     std::fclose(f);
     return 1;
 }

@@ -362,6 +362,10 @@ PCSX2HOOK_API int pcsx2hook_read_gs_display(pcsx2hook_ctx* ctx, pcsx2hook_gs_dis
  * ::pcsx2hook_read_gs_pixels answers with a texture's own values; this answers with pixels, so a
  * 24 bit buffer comes back opaque rather than with the alpha the format does not carry.
  *
+ * The alpha byte is the one GS memory holds, in the GS's own units where 128 is opaque, because a
+ * destination alpha test reads it. ::pcsx2hook_write_png drops it; ::pcsx2hook_write_png_gray
+ * writes it as a plane of its own.
+ *
  * @param block Base in 64-word blocks, which is FRAME's FBP times 32.
  * @param fbw Buffer width in 64-pixel units, as FRAME states it.
  * @param psm GS pixel storage mode.
@@ -385,6 +389,15 @@ PCSX2HOOK_API size_t pcsx2hook_read_gs_frame(pcsx2hook_ctx* ctx, uint32_t block,
  */
 PCSX2HOOK_API int pcsx2hook_write_png(pcsx2hook_ctx* ctx, const char* path,
 	const uint32_t* pixels, uint32_t width, uint32_t height);
+
+/**
+ * @brief Writes one byte per pixel as an 8 bit greyscale uncompressed PNG. @return Non-zero on
+ *        success.
+ * @note For a plane a colour picture cannot carry: the alpha
+ *       ::pcsx2hook_read_gs_frame read, as stored.
+ */
+PCSX2HOOK_API int pcsx2hook_write_png_gray(pcsx2hook_ctx* ctx, const char* path,
+	const uint8_t* values, uint32_t width, uint32_t height);
 
 /**
  * @brief Opens a draw context that traced work is attributed to. Pair with ::pcsx2hook_pop_draw.
