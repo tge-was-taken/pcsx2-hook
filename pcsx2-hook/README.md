@@ -86,6 +86,14 @@ Both report how many times each hook fired when the run ends, because a substitu
 fires looks exactly like one that worked. `--watch ADDR` counts without substituting, which is
 how to find out whether a function is called at all before deciding to feed it.
 
+`--watch-writes LO:HI` lists each pc that stores into the range, with its function, the frame and
+a count at the end, and `pcsx2hook_set_write_sink` does the same for a library caller.
+Arming it runs the EE in the interpreter, so the pc is exact and every store is seen, which makes
+the run slower; a run that does not arm it pays nothing. It sees stores the EE issues, not DMA, VIF or IOP writes.
+`pcsx2hook_read_scratchpad`, `pcsx2hook_read_vu_memory` and `pcsx2hook_read_vu_regs` copy the
+memories outside main RAM, and `pcsx2hook_call_ee_ex` passes up to eight integer and eight float
+arguments and returns `$v0` and `$f0`.
+
 `--elf FILE` boots an executable of your own with the disc still mounted, which is how a build of
 a program runs against the data it shipped with. Note that a decompilation's link product is not
 usually the bootable file: the one to pass is whatever reproduces the original executable, headers

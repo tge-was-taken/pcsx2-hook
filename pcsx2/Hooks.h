@@ -81,7 +81,11 @@ namespace Hooks
 	// EE thread, inside a hook handler, non-blocking targets only (EE interrupts are masked).
 	u32 CallEE(u32 pc, std::initializer_list<u32> gpr = {}, std::initializer_list<float> fpr = {});
 
+	// The same with raw float bits, up to eight of each; $f0 at return goes to f0Bits when given.
+	u32 CallEERaw(u32 pc, const u32* gpr, int ngpr, const u32* fprBits, int nfpr, u32* f0Bits);
+
 	void SetCallMarker(u32 addr);
+	bool HasCallMarker();
 
 	using Observer = void (*)(Context& ctx);
 	void SetObserver(Observer observer);

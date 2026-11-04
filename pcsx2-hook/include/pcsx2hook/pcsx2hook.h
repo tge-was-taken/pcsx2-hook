@@ -231,17 +231,76 @@ PCSX2HOOK_API void pcsx2hook_set_dma_kick_sink(pcsx2hook_ctx* ctx, pcsx2hook_dma
 PCSX2HOOK_API void pcsx2hook_set_hook_observer(pcsx2hook_ctx* ctx, pcsx2hook_post_fn fn, void* user);
 
 /**
- * @brief Runs a guest function with up to four integer arguments and returns @c $v0.
+ * @brief Runs a guest function with up to eight integer arguments and returns @c $v0, or 0
+ *        when the count is over eight (see ::pcsx2hook_call_ee_ex for the error).
  * @warning Hook handlers only, and non-blocking targets only: EE interrupts are masked.
  */
 PCSX2HOOK_API uint32_t pcsx2hook_call_ee(pcsx2hook_ctx* ctx, uint32_t pc, const uint32_t* args,
 	size_t count);
+
+/**
+ * @brief Runs a guest function with up to eight integer arguments ($a0 to $a3, $t0 to $t3) and
+ *        up to eight float arguments ($f12 to $f19, as raw bits), the EE eabi.
+ * @param v0 receives $v0 when not null
+ * @param f0Bits receives $f0 as raw bits when not null
+ * @return Non-zero when it ran; zero with ::pcsx2hook_get_last_error set when an argument count
+ *         is over eight or the call marker is not set up, in which case nothing ran.
+ * @warning Hook handlers only, and non-blocking targets only: EE interrupts are masked.
+ */
+PCSX2HOOK_API int pcsx2hook_call_ee_ex(pcsx2hook_ctx* ctx, uint32_t pc, const uint32_t* args,
+	size_t count, const uint32_t* fargBits, size_t fcount, uint32_t* v0, uint32_t* f0Bits);
 
 /** @brief Maps a guest address to a host pointer, or null if unmapped or past main RAM. */
 PCSX2HOOK_API void* pcsx2hook_map_guest(pcsx2hook_ctx* ctx, uint32_t addr, uint32_t size);
 
 /** @brief The base of EE main RAM, or null before the VM is up. @p size may be null. */
 PCSX2HOOK_API void* pcsx2hook_get_ram_base(pcsx2hook_ctx* ctx, uint32_t* size);
+
+/** @brief A vector unit's register file, as raw words. */
+typedef struct
+{
+	uint32_t vf[32][4]; /**< VF0 to VF31, x y z w. */
+	uint32_t vi[32];    /**< VI0 to VI15, then the control registers: 16 status, 17 MAC, 18 clip,
+	                         20 R, 21 I, 22 Q, 23 P, 26 TPC, 27 CMSAR0, 28 FBRST, 29 VPU_STAT. */
+	uint32_t acc[4];    /**< ACC x y z w. */
+	uint32_t q, p;      /**< The Q and P registers as the unit holds them. */
+} pcsx2hook_vu_regs;
+
+/**
+ * @brief Copies the EE scratchpad (0x70000000, 16 KB), which ::pcsx2hook_map_guest cannot reach.
+ * @return Bytes copied, at most 16384, zero before the VM is up.
+ * @note From a hook handler or @c on_frame, the threads that own the EE.
+ */
+PCSX2HOOK_API size_t pcsx2hook_read_scratchpad(pcsx2hook_ctx* ctx, void* out, size_t size);
+
+/**
+ * @brief Copies a vector unit's data memory: VU0 4 KB, VU1 16 KB.
+ * @param unit 0 or 1
+ * @return Bytes copied; zero for another unit or before the VM is up.
+ * @note The unit's state as the interpreter or recompiler last left it. For VU0 in macro mode
+ *       that is the state at a COP2 instruction boundary, which a hook entry always is.
+ */
+PCSX2HOOK_API size_t pcsx2hook_read_vu_memory(pcsx2hook_ctx* ctx, int unit, void* out, size_t size);
+
+/** @brief Copies a vector unit's registers. @return Non-zero on success, zero for another unit. */
+PCSX2HOOK_API int pcsx2hook_read_vu_regs(pcsx2hook_ctx* ctx, int unit, pcsx2hook_vu_regs* out);
+
+/** Called for each EE store in the armed range. @p pc is the storing instruction's address and
+ *  @p value the low 64 bits stored. */
+typedef void (*pcsx2hook_write_fn)(uint32_t addr, uint32_t size, uint64_t value, uint32_t pc,
+                                   void* user);
+
+/**
+ * @brief Reports EE stores to [lo, hi) through @p fn. A NULL @p fn disarms.
+ *
+ * Arming runs the EE in the interpreter, so @p pc is exact (the recompiler only knows the
+ * start of its block) and every store reaches the sink. The run is slower; an unarmed run pays
+ * nothing. It sees stores the EE issues, not DMA, VIF or IOP writes. Resolve @p pc to a
+ * function with pcsx2hook_resolve_symbol. Call before pcsx2hook_init, which reads the setting.
+ * @return Zero with last_error set when lo >= hi or the VM is already running.
+ */
+PCSX2HOOK_API int pcsx2hook_set_write_sink(pcsx2hook_ctx* ctx, uint32_t lo, uint32_t hi,
+                                           pcsx2hook_write_fn fn, void* user);
 
 /** @brief The EE program counter, for a sampler or a heartbeat. */
 PCSX2HOOK_API uint32_t pcsx2hook_get_ee_pc(pcsx2hook_ctx* ctx);
@@ -255,6 +314,12 @@ PCSX2HOOK_API const char* pcsx2hook_get_disc_serial(pcsx2hook_ctx* ctx);
  *  overrides the EE's per title, so a capture that is a float reference has to
  *  record what it ran under rather than assume the default. */
 PCSX2HOOK_API int pcsx2hook_get_round_mode(pcsx2hook_ctx* ctx, const char* which);
+
+/** @brief The clamping modes of the recompiler for one unit, as a bit set: bit 0 overflow,
+ *  bit 1 extra overflow, bit 2 sign overflow (VU) or full mode (EE), bit 3 underflow (VU, never
+ *  set for the EE). @p which is @c "ee", @c "vu0" or @c "vu1"; -1 for a name this does not know.
+ *  Interpreters clamp as the hardware does regardless, so this describes the recompiler. */
+PCSX2HOOK_API int pcsx2hook_get_clamp_mode(pcsx2hook_ctx* ctx, const char* which);
 
 /** @brief Boots this ELF instead of the disc's own, with the disc still mounted. */
 PCSX2HOOK_API void pcsx2hook_set_boot_elf(pcsx2hook_ctx* ctx, const char* path);

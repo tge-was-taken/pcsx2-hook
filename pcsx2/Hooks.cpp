@@ -12,6 +12,7 @@
 #include "fmt/format.h"
 
 #include <atomic>
+#include <cstring>
 #include <iterator>
 #include <unordered_map>
 #include <vector>
@@ -106,6 +107,11 @@ void Hooks::SetCallMarker(u32 addr)
 	s_hooks[addr];
 }
 
+bool Hooks::HasCallMarker()
+{
+	return s_callMarker != 0;
+}
+
 u32 Hooks::CallEE(u32 pc, std::initializer_list<u32> gpr, std::initializer_list<float> fpr)
 {
 	if (s_callMarker == 0)
@@ -121,6 +127,19 @@ u32 Hooks::CallEE(u32 pc, std::initializer_list<u32> gpr, std::initializer_list<
 		if (nf < 8)
 			f[nf++] = v;
 	return eeRunFunctionSync(pc, g, ng, f, nf, s_callMarker);
+}
+
+u32 Hooks::CallEERaw(u32 pc, const u32* gpr, int ngpr, const u32* fprBits, int nfpr, u32* f0Bits)
+{
+	if (s_callMarker == 0)
+		return 0;
+	float f[8] = {};
+	for (int i = 0; i < nfpr && i < 8; i++)
+		std::memcpy(&f[i], &fprBits[i], sizeof(float));
+	const u32 v0 = eeRunFunctionSync(pc, gpr, ngpr, f, nfpr, s_callMarker);
+	if (f0Bits)
+		std::memcpy(f0Bits, &fpuRegs.fpr[0].f, sizeof(u32));
+	return v0;
 }
 
 void Hooks::SetObserver(Observer observer)

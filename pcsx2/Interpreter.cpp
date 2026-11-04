@@ -241,6 +241,20 @@ static void execI()
 	opcode.interpret();
 }
 
+#ifdef PCSX2HOOK
+// Runs from the current pc until it reaches @p marker. Returns false after stepLimit instructions.
+bool intRunUntil(u32 marker, u64 stepLimit)
+{
+	for (u64 i = 0; cpuRegs.pc != marker; i++)
+	{
+		if (i >= stepLimit)
+			return false;
+		execI();
+	}
+	return true;
+}
+#endif
+
 static __fi void _doBranch_shared(u32 tar)
 {
 	branch2 = cpuRegs.branch = 1;

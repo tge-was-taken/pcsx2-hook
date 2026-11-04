@@ -783,6 +783,7 @@ static void recExecute()
 // $ra points at a marker whose trampoline calls eeSyncCallReturn, which fastjmps back here.
 static fastjmp_buf s_syncCallJmp;
 static int s_syncCallDepth = 0;
+bool intRunUntil(u32 marker, u64 stepLimit);
 
 int eeInSyncCall()
 {
@@ -824,7 +825,12 @@ u32 eeRunFunctionSync(u32 pc, const u32* gpr, int ngpr, const float* fpr, int nf
 	cpuRegs.CP0.n.Status.b.EIE = 0;
 
 	s_syncCallDepth++;
-	if (!fastjmp_set(&s_syncCallJmp))
+	if (!EmuConfig.Cpu.Recompiler.EnableEE)
+	{
+		if (!intRunUntil(returnMarker, 1ull << 31))
+			pxFailRel("eeRunFunctionSync: the called function did not return");
+	}
+	else if (!fastjmp_set(&s_syncCallJmp))
 		((void (*)())EnterRecompiledCode)();
 	s_syncCallDepth--;
 

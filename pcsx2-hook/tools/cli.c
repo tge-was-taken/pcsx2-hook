@@ -286,6 +286,8 @@ static int parseFeed(const char* text)
 	return 1;
 }
 
+static uint32_t s_writeLo, s_writeHi;
+
 static int parseWatch(const char* text)
 {
 	argFeed* f;
@@ -378,9 +380,48 @@ static void onVmReady(void* user)
 /* Report what each hook saw. A substitution that never fires looks exactly
  * like one that worked, and reading the result of a run that did nothing is
  * worse than reading no result. */
+/* One row per distinct storing pc: the first store is printed, the rest are counted. */
+static struct
+{
+	uint32_t pc;
+	unsigned count;
+} s_writers[256];
+static int s_writerCount;
+
+static void onWrite(uint32_t addr, uint32_t size, uint64_t value, uint32_t pc, void* user)
+{
+	char name[256];
+	int i;
+
+	(void)user;
+	for (i = 0; i < s_writerCount; i++)
+	{
+		if (s_writers[i].pc == pc)
+		{
+			s_writers[i].count++;
+			return;
+		}
+	}
+	if (s_writerCount == 256)
+	{
+		fprintf(stderr, "[write] more than 256 distinct storing pcs, the rest are not listed\n");
+		s_writerCount++;
+		return;
+	}
+	if (s_writerCount > 256)
+		return;
+	s_writers[s_writerCount].pc = pc;
+	s_writers[s_writerCount++].count = 1;
+	pcsx2hook_resolve_symbol(s_ctx, pc, name, sizeof(name));
+	fprintf(stderr, "[write] frame %u first store %08X size %u value %llx pc %08X in %s\n", s_frame,
+	        addr, size, (unsigned long long)value, pc, name);
+}
+
 static void onShutdown(void* user)
 {
 	(void)user;
+	for (int i = 0; i < s_writerCount && i < 256; i++)
+		fprintf(stderr, "[write] pc %08X stored %u times\n", s_writers[i].pc, s_writers[i].count);
 	for (int i = 0; i < s_feedCount; i++)
 	{
 		fprintf(stderr, "[arg] %08X called %u times", s_feeds[i].addr, s_feeds[i].hits);
@@ -475,6 +516,8 @@ static void usage(FILE* f)
 		"                      call of the function at ADDR, cycling\n"
 		"  --arg-file ADDR:REG:FILE  the same, with the values read from FILE\n"
 		"  --watch ADDR        only count calls of the function at ADDR\n"
+		"  --watch-writes LO:HI  list each pc that stores into [LO, HI), with its function and\n"
+		"                      a count at the end; runs the EE interpreted, so it is slow\n"
 		"\n"
 		"traces:");
 	for (int i = 0; i < kTraceCount; i++)
@@ -634,6 +677,17 @@ int main(int argc, char** argv)
 			}
 			i++;
 		}
+		else if (strcmp(a, "--watch-writes") == 0)
+		{
+			char* end = NULL;
+			s_writeLo = v ? (uint32_t)strtoul(v, &end, 0) : 0;
+			if (!v || *end != ':' || (s_writeHi = (uint32_t)strtoul(end + 1, NULL, 0)) <= s_writeLo)
+			{
+				fprintf(stderr, "--watch-writes takes LO:HI with LO < HI\n");
+				return 2;
+			}
+			i++;
+		}
 		else if (strcmp(a, "--poke") == 0)
 		{
 			if (!v || !addPoke(v))
@@ -699,9 +753,9 @@ int main(int argc, char** argv)
 	cfg.symbols = symbols;
 	cfg.surfaceless = 1;
 	cfg.software_gs = softwareGs;
-	if (s_pressCount || s_callCount || s_pokeCount)
+	if (s_pressCount || s_callCount || s_pokeCount || s_writeHi)
 		cfg.on_frame = onFrame;
-	if (s_feedCount || s_callCount || s_pokeCount)
+	if (s_feedCount || s_callCount || s_pokeCount || s_writeHi)
 	{
 		cfg.on_vm_ready = onVmReady;
 		cfg.on_shutdown = onShutdown;
@@ -717,6 +771,12 @@ int main(int argc, char** argv)
 		const char* eq = strchr(sets[i], '=');
 		snprintf(name, sizeof(name), "%.*s", (int)(eq - sets[i]), sets[i]);
 		pcsx2hook_set_config(ctx, name, eq + 1);
+	}
+	if (s_writeHi && !pcsx2hook_set_write_sink(ctx, s_writeLo, s_writeHi, onWrite, NULL))
+	{
+		fprintf(stderr, "--watch-writes: %s\n", pcsx2hook_get_last_error(ctx));
+		pcsx2hook_destroy(ctx);
+		return 1;
 	}
 	pcsx2hook_set_interpreter(ctx, cpus);
 	pcsx2hook_set_accurate_timing(ctx, accurate);

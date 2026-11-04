@@ -22,6 +22,8 @@
 #include "GS/GSLocalMemory.h"
 #include "GS/Renderers/Common/GSRenderer.h"
 #include "pcsx2/R5900.h"
+#include "pcsx2/VU.h"
+#include "pcsx2/VUmicro.h"
 #include "pcsx2/Host.h"
 #include "pcsx2/VMManager.h"
 #include "fmt/format.h"
@@ -136,6 +138,21 @@ struct pcsx2hook_ctx {
     uint32_t frameHeight = 0;
 };
 
+namespace {
+struct WriteSink {
+    pcsx2hook_write_fn fn;
+    void* user;
+    uint32_t lo, hi;
+};
+WriteSink s_writeSink;
+
+void writeSinkTrampoline(u32 addr, u64 value, u32 size, bool isRead) {
+    const WriteSink s = s_writeSink;
+    if (isRead || !s.fn || addr < s.lo || addr >= s.hi) return;
+    s.fn(addr, size, value, cpuRegs.pc - 4, s.user);
+}
+}  // namespace
+
 extern "C" {
 
 pcsx2hook_ctx* pcsx2hook_create(const pcsx2hook_config* config) {
@@ -188,7 +205,7 @@ void setOrUnset(const char* name, bool on, const char* value = "1") {
 
 void pcsx2hook_set_interpreter(pcsx2hook_ctx* ctx, unsigned cpus) {
     if (!ctx) return;
-    setOrUnset("PCSX2HOOK_EE_INTERP", cpus & PCSX2HOOK_CPU_EE);
+    setOrUnset("PCSX2HOOK_EE_INTERP", (cpus & PCSX2HOOK_CPU_EE) || s_writeSink.fn);
     setOrUnset("PCSX2HOOK_IOP_INTERP", cpus & PCSX2HOOK_CPU_IOP);
     setOrUnset("PCSX2HOOK_VU0_INTERP", cpus & PCSX2HOOK_CPU_VU0);
     setOrUnset("PCSX2HOOK_VU1_INTERP", cpus & PCSX2HOOK_CPU_VU1);
@@ -299,15 +316,26 @@ void pcsx2hook_set_hook_observer(pcsx2hook_ctx* ctx, pcsx2hook_post_fn fn, void*
     Hooks::SetObserver(fn ? &observerThunk : nullptr);
 }
 
-uint32_t pcsx2hook_call_ee(pcsx2hook_ctx* ctx, uint32_t pc, const uint32_t* args, size_t count) {
+int pcsx2hook_call_ee_ex(pcsx2hook_ctx* ctx, uint32_t pc, const uint32_t* args, size_t count,
+                         const uint32_t* fargBits, size_t fcount, uint32_t* v0, uint32_t* f0Bits) {
     if (!ctx) return 0;
-    if (!args || count == 0) return Hooks::CallEE(pc, {}, {});
-    switch (count) {
-        case 1: return Hooks::CallEE(pc, {args[0]}, {});
-        case 2: return Hooks::CallEE(pc, {args[0], args[1]}, {});
-        case 3: return Hooks::CallEE(pc, {args[0], args[1], args[2]}, {});
-        default: return Hooks::CallEE(pc, {args[0], args[1], args[2], args[3]}, {});
+    if (count > 8 || fcount > 8 || (count && !args) || (fcount && !fargBits)) {
+        ctx->error = "pcsx2hook_call_ee_ex: at most eight integer and eight float arguments";
+        return 0;
     }
+    if (!Hooks::HasCallMarker()) {
+        ctx->error = "pcsx2hook_call_ee_ex: the call marker is not set up, call from on_vm_ready on";
+        return 0;
+    }
+    const uint32_t ret = Hooks::CallEERaw(pc, args, static_cast<int>(count), fargBits,
+                                          static_cast<int>(fcount), f0Bits);
+    if (v0) *v0 = ret;
+    return 1;
+}
+
+uint32_t pcsx2hook_call_ee(pcsx2hook_ctx* ctx, uint32_t pc, const uint32_t* args, size_t count) {
+    uint32_t v0 = 0;
+    return pcsx2hook_call_ee_ex(ctx, pc, args, count, nullptr, 0, &v0, nullptr) ? v0 : 0;
 }
 
 void* pcsx2hook_map_guest(pcsx2hook_ctx* ctx, uint32_t addr, uint32_t size) {
@@ -320,6 +348,34 @@ void* pcsx2hook_get_ram_base(pcsx2hook_ctx* ctx, uint32_t* size) {
     if (!ctx || !eeMem) return nullptr;
     if (size) *size = Ps2MemSize::MainRam;
     return eeMem->Main;
+}
+
+size_t pcsx2hook_read_scratchpad(pcsx2hook_ctx* ctx, void* out, size_t size) {
+    if (!ctx || !eeMem || !out) return 0;
+    const size_t n = size < Ps2MemSize::Scratch ? size : Ps2MemSize::Scratch;
+    std::memcpy(out, eeMem->Scratch, n);
+    return n;
+}
+
+size_t pcsx2hook_read_vu_memory(pcsx2hook_ctx* ctx, int unit, void* out, size_t size) {
+    if (!ctx || !out || (unit != 0 && unit != 1) || !vuRegs[unit].Mem) return 0;
+    const size_t have = unit == 0 ? VU0_MEMSIZE : VU1_MEMSIZE;
+    const size_t n = size < have ? size : have;
+    std::memcpy(out, vuRegs[unit].Mem, n);
+    return n;
+}
+
+int pcsx2hook_read_vu_regs(pcsx2hook_ctx* ctx, int unit, pcsx2hook_vu_regs* out) {
+    if (!ctx || !out || (unit != 0 && unit != 1)) return 0;
+    const VURegs& v = vuRegs[unit];
+    for (int i = 0; i < 32; i++) {
+        std::memcpy(out->vf[i], &v.VF[i], 16);
+        out->vi[i] = v.VI[i].UL;
+    }
+    std::memcpy(out->acc, &v.ACC, 16);
+    out->q = v.q.UL;
+    out->p = v.p.UL;
+    return 1;
 }
 
 uint32_t pcsx2hook_get_ee_pc(pcsx2hook_ctx* ctx) {
@@ -1014,6 +1070,18 @@ int pcsx2hook_get_round_mode(pcsx2hook_ctx* ctx, const char* which) {
     return -1;
 }
 
+int pcsx2hook_get_clamp_mode(pcsx2hook_ctx* ctx, const char* which) {
+    if (!ctx || !which) return -1;
+    const auto& r = EmuConfig.Cpu.Recompiler;
+    if (std::strcmp(which, "ee") == 0)
+        return r.fpuOverflow | (r.fpuExtraOverflow << 1) | (r.fpuFullMode << 2);
+    if (std::strcmp(which, "vu0") == 0)
+        return r.vu0Overflow | (r.vu0ExtraOverflow << 1) | (r.vu0SignOverflow << 2) | (r.vu0Underflow << 3);
+    if (std::strcmp(which, "vu1") == 0)
+        return r.vu1Overflow | (r.vu1ExtraOverflow << 1) | (r.vu1SignOverflow << 2) | (r.vu1Underflow << 3);
+    return -1;
+}
+
 uint64_t pcsx2hook_get_gs_stream_transfers(pcsx2hook_ctx* ctx) {
     if (!ctx) return 0;
     return GsStream::get().getTransfers();
@@ -1045,6 +1113,32 @@ void pcsx2hook_flush_traces(pcsx2hook_ctx* ctx) {
     diag.getDraws().writeVuWatchTrace();
     diag.getDraws().writeVuJrTrace();
     diag.getDraws().writeVuExecTrace();
+}
+
+int pcsx2hook_set_write_sink(pcsx2hook_ctx* ctx, uint32_t lo, uint32_t hi, pcsx2hook_write_fn fn,
+                             void* user) {
+    if (!ctx) return 0;
+    if (fn && (lo >= hi)) {
+        ctx->error = "write sink: the range is empty";
+        return 0;
+    }
+    if (fn && VMManager::HasValidVM()) {
+        ctx->error = "write sink: arm it before the VM starts, fastmem is chosen at boot";
+        return 0;
+    }
+    static bool registered = false;
+    s_writeSink = {nullptr, user, lo, hi};
+    if (!fn) {
+        s_writeSink.fn = nullptr;
+        return 1;
+    }
+    if (!registered) {
+        Hooks::AddGuestMemSink(&writeSinkTrampoline);
+        registered = true;
+    }
+    Config::get().set("PCSX2HOOK_EE_INTERP", "1");
+    s_writeSink.fn = fn;
+    return 1;
 }
 
 const char* pcsx2hook_get_last_error(pcsx2hook_ctx* ctx) {

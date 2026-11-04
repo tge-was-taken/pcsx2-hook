@@ -110,6 +110,10 @@ static void testNullContext(void) {
 	check(pcsx2hook_map_guest(NULL, 0x100000, 4) == NULL, "mem_map");
 	check(pcsx2hook_get_ram_base(NULL, NULL) == NULL, "mem_get_ram_base");
 	check(pcsx2hook_get_ee_pc(NULL) == 0, "get_ee_pc");
+	check(pcsx2hook_set_write_sink(NULL, 0, 4, NULL, NULL) == 0, "a null context refuses a write sink");
+	check(pcsx2hook_call_ee_ex(NULL, 0x100000, NULL, 0, NULL, 0, NULL, NULL) == 0, "call_ee_ex");
+	check(pcsx2hook_get_round_mode(NULL, "vu0") == -1, "round mode of no context");
+	check(pcsx2hook_get_clamp_mode(NULL, "vu0") == -1, "clamp mode of no context");
 	check(pcsx2hook_is_finished(NULL) == 0, "is_finished");
 	check(pcsx2hook_enable_trace(NULL, PCSX2HOOK_TRACE_GS) == 0, "enable_trace");
 	check(pcsx2hook_add_hook(NULL, 0x100000, NULL, NULL, NULL) == 0, "hook_add");
@@ -126,6 +130,18 @@ static void testNullContext(void) {
 	pcsx2hook_pop_draw(NULL);
 	pcsx2hook_flush_traces(NULL);
 	pcsx2hook_destroy(NULL);
+}
+
+static void testModes(pcsx2hook_ctx* ctx) {
+	static const char* const units[] = {"ee", "vu0", "vu1"};
+	for (int i = 0; i < 3; i++) {
+		int c = pcsx2hook_get_clamp_mode(ctx, units[i]);
+		check(c >= 0 && c <= 15, "a known unit has a clamp bit set");
+		check(pcsx2hook_get_round_mode(ctx, units[i]) >= 0, "a known unit has a round mode");
+	}
+	check(pcsx2hook_get_clamp_mode(ctx, "eediv") == -1, "clamp mode of a name it does not know");
+	check(pcsx2hook_get_clamp_mode(ctx, NULL) == -1, "clamp mode of no name");
+	check(pcsx2hook_get_round_mode(ctx, "vu2") == -1, "round mode of a name it does not know");
 }
 
 static void testDrawStack(pcsx2hook_ctx* ctx) {
@@ -209,7 +225,7 @@ static int testBoot(void) {
 	check(pcsx2hook_start(boot.ctx) != 0, "start boots and returns");
 
 	pcsx2hook_pump_window(boot.ctx, 1);
-	pcsx2hook_join(boot.ctx);
+	check(pcsx2hook_join(boot.ctx) == 0, "the run ends with exit status 0");
 
 	check(boot.vmReady == 1, "on_vm_ready ran once");
 	check(boot.frames >= 20, "on_frame ran for every emulated frame");
@@ -357,6 +373,138 @@ static void testRunControl(void) {
 	remove(dir);
 }
 
+/* add.s $f0,$f12,$f13 ; jr $ra ; addu $v0,$a0,$a1 (in the delay slot) */
+static const uint32_t kAddCode[3] = {0x460D6000u, 0x03E00008u, 0x00851021u};
+enum { kAddAt = 0x000FFE00 };
+
+/* sw $a0,0($a1) ; jr $ra ; nop */
+static const uint32_t kStoreCode[3] = {0xACA40000u, 0x03E00008u, 0x00000000u};
+enum { kStoreAt = 0x000FFE40, kWatchLo = 0x00100000, kWatchHi = 0x00100100 };
+
+struct CallEe {
+	pcsx2hook_ctx* ctx;
+	int ran;
+	int armed;
+	int sinkHits;
+	uint32_t sinkAddr, sinkSize, sinkPc;
+	uint64_t sinkValue;
+};
+
+static void onSinkWrite(uint32_t addr, uint32_t size, uint64_t value, uint32_t pc, void* user) {
+	struct CallEe* c = user;
+	c->sinkHits++;
+	c->sinkAddr = addr;
+	c->sinkSize = size;
+	c->sinkPc = pc;
+	c->sinkValue = value;
+}
+
+static uint32_t floatBits(float f) {
+	uint32_t u;
+	memcpy(&u, &f, sizeof(u));
+	return u;
+}
+
+static int callEeAnchor(pcsx2hook_regs* regs, void* user) {
+	(void)regs;
+	struct CallEe* c = user;
+	if (c->ran) return PCSX2HOOK_CONTINUE;
+	c->ran = 1;
+	void* at = pcsx2hook_map_guest(c->ctx, kAddAt, sizeof(kAddCode));
+	check(at != NULL, "the test function's address maps");
+	if (!at) return PCSX2HOOK_CONTINUE;
+	memcpy(at, kAddCode, sizeof(kAddCode));
+
+	const uint32_t ints[2] = {7, 5};
+	const uint32_t floats[2] = {floatBits(1.5f), floatBits(2.25f)};
+	uint32_t v0 = 0, f0 = 0;
+	check(pcsx2hook_call_ee_ex(c->ctx, kAddAt, ints, 2, floats, 2, &v0, &f0) == 1,
+	      "a call with integer and float arguments runs");
+	check(v0 == 12, "the integer arguments reach $a0 and $a1");
+	check(f0 == floatBits(3.75f), "the float arguments reach $f12 and $f13 and $f0 comes back");
+
+	/* a refusal must run nothing and leave the outputs alone */
+	const uint32_t nine[9] = {0};
+	v0 = 0xDEADBEEF;
+	f0 = 0xDEADBEEF;
+	check(pcsx2hook_call_ee_ex(c->ctx, kAddAt, nine, 9, NULL, 0, &v0, &f0) == 0,
+	      "nine integer arguments are refused");
+	check(v0 == 0xDEADBEEF && f0 == 0xDEADBEEF, "a refused call writes no result");
+	check(strstr(pcsx2hook_get_last_error(c->ctx), "at most eight") != NULL,
+	      "a refusal says what it could not do");
+	check(pcsx2hook_call_ee(c->ctx, kAddAt, ints, 2) == 12, "the integer-only call still works");
+
+	if (!c->armed) {
+		pcsx2hook_request_stop(c->ctx);
+		return PCSX2HOOK_CONTINUE;
+	}
+	/* the write sink sees a store inside its range and none outside it */
+	void* st = pcsx2hook_map_guest(c->ctx, kStoreAt, sizeof(kStoreCode));
+	check(st != NULL, "the store function's address maps");
+	if (st) {
+		memcpy(st, kStoreCode, sizeof(kStoreCode));
+		const uint32_t outside[2] = {0x1234, kWatchHi + 0x100};
+		const uint32_t inside[2] = {0xCAFE0001u, kWatchLo + 0x10};
+		pcsx2hook_call_ee(c->ctx, kStoreAt, outside, 2);
+		check(c->sinkHits == 0, "a store outside the range is not reported");
+		pcsx2hook_call_ee(c->ctx, kStoreAt, inside, 2);
+		check(c->sinkHits == 1 && c->sinkAddr == kWatchLo + 0x10 && c->sinkSize == 4 &&
+		          c->sinkValue == 0xCAFE0001u && c->sinkPc == kStoreAt,
+		      "a store inside the range is reported with its address, size, value and storing pc");
+	}
+	check(pcsx2hook_set_write_sink(c->ctx, kWatchLo, kWatchHi, onSinkWrite, c) == 0,
+	      "arming a write sink on a running VM is refused");
+	check(strstr(pcsx2hook_get_last_error(c->ctx), "before the VM starts") != NULL,
+	      "the refusal says what it could not do");
+	pcsx2hook_request_stop(c->ctx);
+	return PCSX2HOOK_CONTINUE;
+}
+
+static void testCallEe(int withSink) {
+	const char* bios = getenv("PCSX2HOOK_TEST_BIOS");
+	const char* image = getenv("PCSX2HOOK_TEST_IMAGE");
+	const char* state = getenv("PCSX2HOOK_TEST_STATE");
+	const char* anchor = getenv("PCSX2HOOK_TEST_ANCHOR");
+	if (!bios || !image || !state || !anchor) {
+		printf("skipping the call test: set PCSX2HOOK_TEST_BIOS, _IMAGE, _STATE and _ANCHOR "
+		       "(a function the state's game calls every frame)\n");
+		return;
+	}
+	struct CallEe c = {0};
+	c.armed = withSink;
+	pcsx2hook_config cfg;
+	memset(&cfg, 0, sizeof(cfg));
+	cfg.bios = bios;
+	cfg.surfaceless = 1;
+	c.ctx = pcsx2hook_create(&cfg);
+	check(c.ctx != NULL, "create for the call test");
+	if (!c.ctx) return;
+	pcsx2hook_set_frame_limit(c.ctx, 600);
+	pcsx2hook_set_boot_state(c.ctx, state);
+	char* argv[] = {(char*)"pcsx2hook_api_test", (char*)image, NULL};
+	if (withSink) {
+		check(pcsx2hook_set_write_sink(c.ctx, kWatchHi, kWatchLo, onSinkWrite, &c) == 0,
+		      "an empty write range is refused");
+		check(pcsx2hook_set_write_sink(c.ctx, kWatchLo, kWatchHi, onSinkWrite, &c) == 1,
+		      "a write sink arms before start");
+	}
+	pcsx2hook_early_init(c.ctx);
+	if (!pcsx2hook_init(c.ctx, 2, argv)) {
+		check(0, "init for the call test");
+		pcsx2hook_destroy(c.ctx);
+		return;
+	}
+	pcsx2hook_apply_settings(c.ctx);
+	check(pcsx2hook_add_hook(c.ctx, (uint32_t)strtoul(anchor, NULL, 0), callEeAnchor, NULL, &c) != 0,
+	      "the anchor hook installs");
+	check(pcsx2hook_start(c.ctx) != 0, "start for the call test");
+	pcsx2hook_pump_window(c.ctx, 1);
+	check(pcsx2hook_join(c.ctx) == 0, "the hooked run ends with exit status 0");
+	pcsx2hook_shutdown(c.ctx);
+	pcsx2hook_destroy(c.ctx);
+	check(c.ran == 1, "the anchor was reached");
+}
+
 static int report(void) {
 	printf(failures ? "%d failed\n" : "all passed\n", failures);
 	return failures != 0;
@@ -370,6 +518,14 @@ int main(int argc, char** argv) {
 	}
 	if (strcmp(mode, "destroy") == 0) {
 		testDestroyWhileRunning();
+		return report();
+	}
+	if (strcmp(mode, "call-ee") == 0) {
+		testCallEe(0);
+		return report();
+	}
+	if (strcmp(mode, "write-sink") == 0) {
+		testCallEe(1);
 		return report();
 	}
 	if (strcmp(mode, "run-control") == 0) {
@@ -401,6 +557,7 @@ int main(int argc, char** argv) {
 		testSizeContract(ctx);
 		testErrors(ctx);
 		testDrawStack(ctx);
+		testModes(ctx);
 		pcsx2hook_destroy(ctx);
 	}
 

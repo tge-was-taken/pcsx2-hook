@@ -56,6 +56,8 @@ add_test(NAME pcsx2hook_api COMMAND pcsx2hook_api_test)
 add_test(NAME pcsx2hook_boot COMMAND pcsx2hook_api_test boot)
 add_test(NAME pcsx2hook_destroy_running COMMAND pcsx2hook_api_test destroy)
 add_test(NAME pcsx2hook_run_control COMMAND pcsx2hook_api_test run-control)
+add_test(NAME pcsx2hook_call_ee COMMAND pcsx2hook_api_test call-ee)
+add_test(NAME pcsx2hook_write_sink COMMAND pcsx2hook_api_test write-sink)
 
 add_custom_target(pcsx2hook_resources
 	COMMAND ${CMAKE_COMMAND} -E create_symlink
