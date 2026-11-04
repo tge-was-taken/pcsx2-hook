@@ -27,6 +27,27 @@
 #include "symbols.h"
 #include "trace/gs_stream.h"
 
+#if defined(__linux__)
+#include <dlfcn.h>
+#include <link.h>
+
+/*
+ * Replaces libc's dlclose for the D3D12 driver libraries under /usr/lib/wsl. The Vulkan loader
+ * probes the dzn driver, closes it, then opens it again, and the thread that ran the first load
+ * still holds thread-specific data whose destructors point into the unmapped copy, so it dies
+ * running unmapped code at exit (SIGSEGV, then "Aborting application"). Keeping those libraries
+ * mapped costs nothing the process would get back. Everything else closes as before.
+ */
+extern "C" __attribute__((visibility("default"))) int dlclose(void* handle) {
+    static int (*const realClose)(void*) = reinterpret_cast<int (*)(void*)>(dlsym(RTLD_NEXT, "dlclose"));
+    struct link_map* map = nullptr;
+    if (handle && dlinfo(handle, RTLD_DI_LINKMAP, &map) == 0 && map && map->l_name &&
+        strstr(map->l_name, "/usr/lib/wsl/") != nullptr)
+        return 0;
+    return realClose(handle);
+}
+#endif
+
 namespace pcsx2hook {
 namespace {
 
