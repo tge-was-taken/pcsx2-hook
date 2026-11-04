@@ -46,9 +46,12 @@ static const char* const kButtons[PCSX2HOOK_PAD_COUNT] = {
  * about, and a schedule keeps that reproducible where a human cannot. */
 typedef struct
 {
-	unsigned frame;
+	unsigned frame;   /* absolute, or after the segment's wait when segment > 0 */
 	unsigned hold;
 	int button;
+	int segment;
+	int state;        /* 0 waiting, 1 held, 2 released */
+	unsigned from;
 } press;
 
 enum
@@ -59,6 +62,40 @@ enum
 
 static press s_presses[kMaxPresses];
 static int s_pressCount;
+
+/* Script steps run in order from the call anchor. A wait ends when its
+ * condition holds, and `+N` presses count frames from that arrival. */
+typedef enum
+{
+	kStepWait,
+	kStepWrite,
+	kStepCall
+} stepKind;
+
+typedef struct
+{
+	stepKind kind;
+	char addr[96];       /* wait, write: [*]SYM[+OFF][:SIZE], or @FN for a call's result */
+	char symbol[64];     /* call */
+	char argSym[4][64];  /* call: a nonempty entry is the address of that symbol */
+	uint32_t args[4];
+	int argCount;
+	int op;
+	uint32_t value;
+	unsigned bound;
+} scriptStep;
+
+enum { kMaxSteps = 32 };
+static scriptStep s_steps[kMaxSteps];
+static int s_stepCount;
+static int s_stepCursor;
+static int s_waitsDone;
+static unsigned s_arrivals[kMaxSteps + 1];
+static unsigned s_waitStart;
+static int s_waitStarted;
+static int s_stepFailed;
+static int s_stepWaits;
+static const char* const kOps[] = { "eq", "ne", "ge", "le", "gt", "lt" };
 
 /* A scheduled call into the guest: a game's own entry point, run at a chosen
  * frame with chosen arguments. The game's sequence manager is the reason this
@@ -152,7 +189,7 @@ static int addCall(const char* text)
 }
 static pcsx2hook_ctx* s_ctx;
 
-static int parsePress(const char* text)
+static int parsePress(const char* text, int segment)
 {
 	char name[32];
 	unsigned frame, hold = kDefaultHold;
@@ -173,6 +210,7 @@ static int parsePress(const char* text)
 		if (strcmp(kButtons[b], name) != 0)
 			continue;
 		s_presses[s_pressCount].frame = frame;
+		s_presses[s_pressCount].segment = segment;
 		s_presses[s_pressCount].hold = hold ? hold : 1;
 		s_presses[s_pressCount].button = b;
 		s_pressCount++;
@@ -182,9 +220,80 @@ static int parsePress(const char* text)
 	return 0;
 }
 
+static int addStep(const scriptStep* step)
+{
+	if (s_stepCount == kMaxSteps)
+	{
+		fprintf(stderr, "a script holds at most %d steps\n", kMaxSteps);
+		return 0;
+	}
+	s_steps[s_stepCount++] = *step;
+	return 1;
+}
+
+/* wait BOUND ADDR OP VALUE | write ADDR VALUE [SIZE] | call SYM [A0[,A1..]],
+ * where an argument is a number or &SYMBOL. Returns -1 on a bad line, 0 when
+ * the line is not a step. */
+static int parseStep(const char* line)
+{
+	scriptStep step;
+	char op[8];
+	char list[160];
+	int n;
+
+	memset(&step, 0, sizeof(step));
+	if (sscanf(line, " wait %u %95s %7s %i", &step.bound, step.addr, op, (int*)&step.value) == 4)
+	{
+		step.kind = kStepWait;
+		step.op = -1;
+		for (int i = 0; i < 6; i++)
+		{
+			if (strcmp(op, kOps[i]) == 0)
+				step.op = i;
+		}
+		if (step.op < 0 || step.bound == 0)
+			return -1;
+		s_stepWaits++;
+		return addStep(&step) ? 1 : -1;
+	}
+	if (sscanf(line, " write %95s %i", step.addr, (int*)&step.value) == 2)
+	{
+		step.kind = kStepWrite;
+		return addStep(&step) ? 1 : -1;
+	}
+	n = sscanf(line, " call %63s %159s", step.symbol, list);
+	if (n >= 1 && strncmp(line + strspn(line, " "), "call", 4) == 0)
+	{
+		const char* at = n == 2 ? list : "";
+
+		step.kind = kStepCall;
+		while (*at && step.argCount < 4)
+		{
+			if (*at == '&')
+			{
+				int len = (int)strcspn(at + 1, ",");
+
+				if (len == 0 || len >= (int)sizeof(step.argSym[0]))
+					return -1;
+				snprintf(step.argSym[step.argCount], sizeof(step.argSym[0]), "%.*s", len, at + 1);
+				at += 1 + len;
+			}
+			else
+				step.args[step.argCount] = (uint32_t)strtoul(at, (char**)&at, 0);
+			step.argCount++;
+			if (*at == ',')
+				at++;
+			else
+				break;
+		}
+		return *at == '\0' && addStep(&step) ? 1 : -1;
+	}
+	return 0;
+}
+
 static int readScript(const char* path)
 {
-	char line[128];
+	char line[192];
 	FILE* f = fopen(path, "r");
 
 	if (!f)
@@ -198,16 +307,44 @@ static int readScript(const char* path)
 		unsigned frame, hold;
 		char name[32];
 		char* hash = strchr(line, '#');
+		int segment = 0;
+		const char* at = line;
+		int step;
 
 		if (hash)
 			*hash = '\0';
-		if (sscanf(line, "%u %31s %u", &frame, name, &hold) == 3)
+		step = parseStep(line);
+		if (step < 0)
+		{
+			fprintf(stderr, "%s: cannot read the step: %s", path, line);
+			fclose(f);
+			return 0;
+		}
+		if (step > 0)
+			continue;
+		at += strspn(line, " ");
+		if (*at == '+')
+		{
+			at++;
+			segment = 1;
+		}
+		if (sscanf(at, "%u %31s %u", &frame, name, &hold) == 3)
 			snprintf(token, sizeof(token), "%u:%s:%u", frame, name, hold);
-		else if (sscanf(line, "%u %31s", &frame, name) == 2)
+		else if (sscanf(at, "%u %31s", &frame, name) == 2)
 			snprintf(token, sizeof(token), "%u:%s", frame, name);
 		else
 			continue;
-		if (!parsePress(token))
+		if (segment)
+		{
+			segment = s_stepWaits;
+			if (segment == 0)
+			{
+				fprintf(stderr, "%s: +N needs a wait before it: %s", path, line);
+				fclose(f);
+				return 0;
+			}
+		}
+		if (!parsePress(token, segment))
 		{
 			fclose(f);
 			return 0;
@@ -364,7 +501,7 @@ static void onVmReady(void* user)
 		if (!pcsx2hook_add_hook(s_ctx, s_feeds[i].addr, feedPre, NULL, &s_feeds[i]))
 			fprintf(stderr, "cannot hook %08X\n", s_feeds[i].addr);
 	}
-	if (s_callCount || s_pokeCount)
+	if (s_callCount || s_pokeCount || s_stepCount)
 	{
 		uint32_t anchor = pcsx2hook_find_symbol(s_ctx, s_callAnchor);
 
@@ -431,12 +568,193 @@ static void onShutdown(void* user)
 	}
 }
 
+
+/* Resolves [*]SYM[+OFF][:SIZE] to a host pointer, or NULL with the reason
+ * printed. */
+static void* resolveAddr(const char* text, uint32_t* size)
+{
+	char sym[64];
+	const char* at = text;
+	int deref = 0;
+	uint32_t off = 0;
+	uint32_t guest;
+	void* host;
+
+	*size = 4;
+	if (*at == '*')
+	{
+		deref = 1;
+		at++;
+	}
+	int len = (int)strcspn(at, "+:");
+	if (len == 0 || len >= (int)sizeof(sym))
+		return NULL;
+	snprintf(sym, sizeof(sym), "%.*s", len, at);
+	at += len;
+	if (*at == '+')
+		off = (uint32_t)strtoul(at + 1, (char**)&at, 0);
+	if (*at == ':')
+		*size = (uint32_t)strtoul(at + 1, (char**)&at, 0);
+	guest = pcsx2hook_find_symbol(s_ctx, sym);
+	if (guest == 0)
+	{
+		fprintf(stderr, "[step] no symbol named %s; is a map loaded?\n", sym);
+		return NULL;
+	}
+	if (deref)
+	{
+		uint32_t* pointer = (uint32_t*)pcsx2hook_map_guest(s_ctx, guest, 4);
+
+		if (!pointer || *pointer == 0)
+		{
+			fprintf(stderr, "[step] *%s is null or unmapped\n", sym);
+			return NULL;
+		}
+		guest = *pointer;
+	}
+	host = pcsx2hook_map_guest(s_ctx, guest + off, *size);
+	if (!host)
+		fprintf(stderr, "[step] %s+%u is not mapped\n", sym, off);
+	return host;
+}
+
+static int readStepValue(const char* text, uint32_t* value)
+{
+	uint32_t size;
+	void* at;
+
+	if (text[0] == '@')
+	{
+		uint32_t pc = pcsx2hook_find_symbol(s_ctx, text + 1);
+
+		if (pc == 0)
+		{
+			fprintf(stderr, "[step] no function named %s; is a map loaded?\n", text + 1);
+			return 0;
+		}
+		*value = pcsx2hook_call_ee(s_ctx, pc, NULL, 0);
+		return 1;
+	}
+	at = resolveAddr(text, &size);
+	if (!at)
+		return 0;
+	*value = 0;
+	memcpy(value, at, size);
+	return 1;
+}
+
+static int compareValue(int op, uint32_t have, uint32_t want)
+{
+	switch (op)
+	{
+		case 0: return have == want;
+		case 1: return have != want;
+		case 2: return have >= want;
+		case 3: return have <= want;
+		case 4: return have > want;
+		case 5: return have < want;
+	}
+	return 0;
+}
+
+static void failScript(void)
+{
+	s_stepFailed = 1;
+	pcsx2hook_request_stop(s_ctx);
+}
+
+/* Runs the steps that are due. A wait that has not come true holds the rest,
+ * and one past its bound ends the run with exit code 1. */
+static void runSteps(void)
+{
+	while (s_stepCursor < s_stepCount && !s_stepFailed)
+	{
+		scriptStep* step = &s_steps[s_stepCursor];
+
+		if (step->kind == kStepWait)
+		{
+			uint32_t have;
+
+			if (!s_waitStarted)
+			{
+				s_waitStarted = 1;
+				s_waitStart = s_frame;
+			}
+			if (!readStepValue(step->addr, &have))
+			{
+				failScript();
+				return;
+			}
+			if (compareValue(step->op, have, step->value))
+			{
+				fprintf(stderr, "[step] frame %u: %s %s %u held after %u frame(s)\n", s_frame,
+					step->addr, kOps[step->op], step->value, s_frame - s_waitStart);
+				s_waitsDone++;
+				s_arrivals[s_waitsDone] = s_frame;
+				s_waitStarted = 0;
+				s_stepCursor++;
+				continue;
+			}
+			if (s_frame - s_waitStart > step->bound)
+			{
+				fprintf(stderr, "[step] frame %u: %s %s %u did not hold within %u frames; read %u\n",
+					s_frame, step->addr, kOps[step->op], step->value, step->bound, have);
+				failScript();
+			}
+			return;
+		}
+		if (step->kind == kStepWrite)
+		{
+			uint32_t size;
+			void* at = resolveAddr(step->addr, &size);
+
+			if (!at || (size != 1 && size != 2 && size != 4))
+			{
+				failScript();
+				return;
+			}
+			memcpy(at, &step->value, size);
+			fprintf(stderr, "[step] frame %u: %s = %u\n", s_frame, step->addr, step->value);
+		}
+		else
+		{
+			uint32_t pc = pcsx2hook_find_symbol(s_ctx, step->symbol);
+			uint32_t args[4];
+
+			if (pc == 0)
+			{
+				fprintf(stderr, "[step] no function named %s; is a map loaded?\n", step->symbol);
+				failScript();
+				return;
+			}
+			for (int a = 0; a < step->argCount; a++)
+			{
+				args[a] = step->args[a];
+				if (step->argSym[a][0])
+				{
+					args[a] = pcsx2hook_find_symbol(s_ctx, step->argSym[a]);
+					if (args[a] == 0)
+					{
+						fprintf(stderr, "[step] no symbol named %s\n", step->argSym[a]);
+						failScript();
+						return;
+					}
+				}
+			}
+			fprintf(stderr, "[step] frame %u: %s = %u\n", s_frame, step->symbol,
+				pcsx2hook_call_ee(s_ctx, pc, args, step->argCount));
+		}
+		s_stepCursor++;
+	}
+}
+
 /* The anchor's pre-handler: the EE is stopped here, which is the only place a
  * guest call is allowed. */
 static int onCallAnchor(pcsx2hook_regs* regs, void* user)
 {
 	(void)regs;
 	(void)user;
+	runSteps();
 	for (int i = 0; i < s_pokeCount; i++)
 	{
 		guestPoke* poke = &s_pokes[i];
@@ -484,10 +802,24 @@ static void onFrame(uint32_t frame, void* user)
 	s_frame = frame;
 	for (int i = 0; i < s_pressCount; i++)
 	{
-		if (frame == s_presses[i].frame)
-			pcsx2hook_set_pad_button(s_ctx, s_presses[i].button, 1);
-		else if (frame == s_presses[i].frame + s_presses[i].hold)
-			pcsx2hook_set_pad_button(s_ctx, s_presses[i].button, 0);
+		press* p = &s_presses[i];
+
+		if (p->state == 0 && p->segment <= s_waitsDone)
+		{
+			unsigned base = p->segment ? s_arrivals[p->segment] : 0;
+
+			if (frame >= base + p->frame)
+			{
+				p->state = 1;
+				p->from = frame;
+				pcsx2hook_set_pad_button(s_ctx, p->button, 1);
+			}
+		}
+		else if (p->state == 1 && frame >= p->from + p->hold)
+		{
+			p->state = 2;
+			pcsx2hook_set_pad_button(s_ctx, p->button, 0);
+		}
 	}
 }
 
@@ -507,7 +839,11 @@ static void usage(FILE* f)
 		"  --software-gs       rasterize with the software GS instead of the null renderer\n"
 		"  --set NAME=VALUE    any other library setting, by its PCSX2HOOK_ variable name\n"
 		"  --press F:BUTTON[:N]  press BUTTON at frame F for N frames; repeat for more\n"
-		"  --script FILE       the same as lines of \"FRAME BUTTON [HOLD]\", # comments\n"
+		"  --script FILE       lines of \"FRAME BUTTON [HOLD]\", # comments, plus in-order steps from the\n"
+		"                      call anchor: \"wait BOUND ADDR OP VALUE\", \"write ADDR VALUE\",\n"
+		"                      \"call SYM [ARGS]\" (ADDR is [*]SYM[+OFF][:SIZE] or @FN, OP is eq ne ge\n"
+		"                      le gt lt, an arg may be &SYM) and \"+N BUTTON [HOLD]\" after a wait.\n"
+		"                      A wait past BOUND frames, or a run ending first, exits 1\n"
 		"  --call F:SYM[:a0,a1,..]  call the guest function SYM at frame F; repeat for more\n"
 		"  --poke F:ADDR:VAL[:SIZE]  write guest memory at frame F, before any --call\n"
 		"  --call-anchor SYM   where those calls are made from, a function the game\n"
@@ -718,7 +1054,7 @@ int main(int argc, char** argv)
 		}
 		else if (strcmp(a, "--press") == 0)
 		{
-			if (!v || !parsePress(v))
+			if (!v || !parsePress(v, 0))
 			{
 				fprintf(stderr, "--press takes FRAME:BUTTON[:HOLD]\n");
 				return 2;
@@ -753,9 +1089,9 @@ int main(int argc, char** argv)
 	cfg.symbols = symbols;
 	cfg.surfaceless = 1;
 	cfg.software_gs = softwareGs;
-	if (s_pressCount || s_callCount || s_pokeCount || s_writeHi)
+	if (s_pressCount || s_callCount || s_pokeCount || s_stepCount || s_writeHi)
 		cfg.on_frame = onFrame;
-	if (s_feedCount || s_callCount || s_pokeCount || s_writeHi)
+	if (s_feedCount || s_callCount || s_pokeCount || s_stepCount || s_writeHi)
 	{
 		cfg.on_vm_ready = onVmReady;
 		cfg.on_shutdown = onShutdown;
@@ -809,7 +1145,14 @@ int main(int argc, char** argv)
 		return 1;
 	}
 	pcsx2hook_pump_window(ctx, 1);
-	const int rc = pcsx2hook_join(ctx);
+	int rc = pcsx2hook_join(ctx);
+	if (s_stepCursor < s_stepCount && !s_stepFailed)
+	{
+		fprintf(stderr, "[step] the run ended at step %d of %d\n", s_stepCursor + 1, s_stepCount);
+		s_stepFailed = 1;
+	}
+	if (s_stepFailed)
+		rc = 1;
 	pcsx2hook_shutdown(ctx);
 	pcsx2hook_destroy(ctx);
 	return rc;
