@@ -70,7 +70,8 @@ typedef enum
 	kStepWait,
 	kStepWrite,
 	kStepCall,
-	kStepAt
+	kStepAt,
+	kStepSample
 } stepKind;
 
 typedef struct
@@ -223,6 +224,11 @@ static int parsePress(const char* text, int segment)
 	return 0;
 }
 
+enum { kMaxSamples = 4 };
+static char s_samples[kMaxSamples][96];
+static int s_sampleCount;
+static unsigned s_sampleFrame = (unsigned)-1;
+
 static int addStep(const scriptStep* step)
 {
 	if (s_stepCount == kMaxSteps)
@@ -234,7 +240,7 @@ static int addStep(const scriptStep* step)
 	return 1;
 }
 
-/* wait BOUND ADDR OP VALUE | write|or ADDR VALUE | at [+]FRAME | call SYM [A0[,A1..]],
+/* wait BOUND ADDR OP VALUE | write|or ADDR VALUE | sample ADDR | at [+]FRAME | call SYM [A0[,A1..]],
  * where an argument is a number or &SYMBOL. Returns -1 on a bad line, 0 when
  * the line is not a step. */
 static int parseStep(const char* line)
@@ -268,6 +274,11 @@ static int parseStep(const char* line)
 	{
 		step.kind = kStepWrite;
 		step.orBits = 1;
+		return addStep(&step) ? 1 : -1;
+	}
+	if (sscanf(line, " sample %95s", step.addr) == 1)
+	{
+		step.kind = kStepSample;
 		return addStep(&step) ? 1 : -1;
 	}
 	if (sscanf(line, " at +%u", &step.value) == 1 || sscanf(line, " at %u", &step.value) == 1)
@@ -633,6 +644,25 @@ static void* resolveAddr(const char* text, uint32_t* size)
 	return host;
 }
 
+/* A dereferenced sample of a null pointer reads as null; a wait on one is still an error. */
+static int sampleIsNull(const char* text)
+{
+	char sym[64];
+	uint32_t guest;
+	uint32_t* pointer;
+	int len;
+
+	if (text[0] != '*')
+		return 0;
+	len = (int)strcspn(text + 1, "+:");
+	if (len == 0 || len >= (int)sizeof(sym))
+		return 0;
+	snprintf(sym, sizeof(sym), "%.*s", len, text + 1);
+	guest = pcsx2hook_find_symbol(s_ctx, sym);
+	pointer = guest ? (uint32_t*)pcsx2hook_map_guest(s_ctx, guest, 4) : NULL;
+	return pointer && *pointer == 0;
+}
+
 static int readStepValue(const char* text, uint32_t* value)
 {
 	uint32_t size;
@@ -718,7 +748,17 @@ static void runSteps(void)
 			}
 			return;
 		}
-		if (step->kind == kStepAt)
+		if (step->kind == kStepSample)
+		{
+			if (s_sampleCount == kMaxSamples)
+			{
+				fprintf(stderr, "at most %d sample steps\n", kMaxSamples);
+				failScript();
+				return;
+			}
+			strcpy(s_samples[s_sampleCount++], step->addr);
+		}
+		else if (step->kind == kStepAt)
 		{
 			if (s_frame < step->value + (step->relative ? s_arrivals[s_waitsDone] : 0))
 				return;
@@ -785,6 +825,26 @@ static int onCallAnchor(pcsx2hook_regs* regs, void* user)
 	(void)regs;
 	(void)user;
 	runSteps();
+	if (s_sampleCount && s_frame != s_sampleFrame)
+	{
+		s_sampleFrame = s_frame;
+		for (int i = 0; i < s_sampleCount; i++)
+		{
+			uint32_t have;
+
+			if (sampleIsNull(s_samples[i]))
+			{
+				fprintf(stderr, "[sample] frame %u: %s = null\n", s_frame, s_samples[i]);
+				continue;
+			}
+			if (!readStepValue(s_samples[i], &have))
+			{
+				failScript();
+				return 0;
+			}
+			fprintf(stderr, "[sample] frame %u: %s = %u\n", s_frame, s_samples[i], have);
+		}
+	}
 	for (int i = 0; i < s_pokeCount; i++)
 	{
 		guestPoke* poke = &s_pokes[i];
