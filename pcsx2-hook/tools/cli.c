@@ -69,7 +69,8 @@ typedef enum
 {
 	kStepWait,
 	kStepWrite,
-	kStepCall
+	kStepCall,
+	kStepAt
 } stepKind;
 
 typedef struct
@@ -83,6 +84,8 @@ typedef struct
 	int op;
 	uint32_t value;
 	unsigned bound;
+	int orBits;          /* write: OR the value into the old one */
+	int relative;        /* at: frames after the last wait's arrival */
 } scriptStep;
 
 enum { kMaxSteps = 32 };
@@ -231,7 +234,7 @@ static int addStep(const scriptStep* step)
 	return 1;
 }
 
-/* wait BOUND ADDR OP VALUE | write ADDR VALUE [SIZE] | call SYM [A0[,A1..]],
+/* wait BOUND ADDR OP VALUE | write|or ADDR VALUE | at [+]FRAME | call SYM [A0[,A1..]],
  * where an argument is a number or &SYMBOL. Returns -1 on a bad line, 0 when
  * the line is not a step. */
 static int parseStep(const char* line)
@@ -259,6 +262,18 @@ static int parseStep(const char* line)
 	if (sscanf(line, " write %95s %i", step.addr, (int*)&step.value) == 2)
 	{
 		step.kind = kStepWrite;
+		return addStep(&step) ? 1 : -1;
+	}
+	if (sscanf(line, " or %95s %i", step.addr, (int*)&step.value) == 2)
+	{
+		step.kind = kStepWrite;
+		step.orBits = 1;
+		return addStep(&step) ? 1 : -1;
+	}
+	if (sscanf(line, " at +%u", &step.value) == 1 || sscanf(line, " at %u", &step.value) == 1)
+	{
+		step.kind = kStepAt;
+		step.relative = strchr(line, '+') != NULL;
 		return addStep(&step) ? 1 : -1;
 	}
 	n = sscanf(line, " call %63s %159s", step.symbol, list);
@@ -703,7 +718,12 @@ static void runSteps(void)
 			}
 			return;
 		}
-		if (step->kind == kStepWrite)
+		if (step->kind == kStepAt)
+		{
+			if (s_frame < step->value + (step->relative ? s_arrivals[s_waitsDone] : 0))
+				return;
+		}
+		else if (step->kind == kStepWrite)
 		{
 			uint32_t size;
 			void* at = resolveAddr(step->addr, &size);
@@ -713,8 +733,18 @@ static void runSteps(void)
 				failScript();
 				return;
 			}
-			memcpy(at, &step->value, size);
-			fprintf(stderr, "[step] frame %u: %s = %u\n", s_frame, step->addr, step->value);
+			if (step->orBits)
+			{
+				uint32_t old = 0;
+
+				memcpy(&old, at, size);
+				old |= step->value;
+				memcpy(at, &old, size);
+			}
+			else
+				memcpy(at, &step->value, size);
+			fprintf(stderr, "[step] frame %u: %s %s %u\n", s_frame, step->addr,
+				step->orBits ? "|=" : "=", step->value);
 		}
 		else
 		{
@@ -841,6 +871,7 @@ static void usage(FILE* f)
 		"  --press F:BUTTON[:N]  press BUTTON at frame F for N frames; repeat for more\n"
 		"  --script FILE       lines of \"FRAME BUTTON [HOLD]\", # comments, plus in-order steps from the\n"
 		"                      call anchor: \"wait BOUND ADDR OP VALUE\", \"write ADDR VALUE\",\n"
+		"                      \"or ADDR VALUE\", \"at [+]FRAME\",\n"
 		"                      \"call SYM [ARGS]\" (ADDR is [*]SYM[+OFF][:SIZE] or @FN, OP is eq ne ge\n"
 		"                      le gt lt, an arg may be &SYM) and \"+N BUTTON [HOLD]\" after a wait.\n"
 		"                      A wait past BOUND frames, or a run ending first, exits 1\n"
