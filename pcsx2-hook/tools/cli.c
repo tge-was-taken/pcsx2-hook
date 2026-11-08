@@ -71,15 +71,21 @@ typedef enum
 	kStepWrite,
 	kStepCall,
 	kStepAt,
-	kStepSample
+	kStepSample,
+	kStepVec
 } stepKind;
 
 typedef struct
 {
 	stepKind kind;
-	char addr[96];       /* wait, write: [*]SYM[+OFF][:SIZE], or @FN for a call's result */
+	char addr[96];       /* wait, write: [*]SYM[+OFF][:SIZE], or @FN for a call's result;
+	                      * SYM may be $NAME for a binding */
 	char symbol[64];     /* call */
 	char argSym[4][64];  /* call: a nonempty entry is the address of that symbol */
+	char argVar[4][32];  /* call: a nonempty entry is the value of that binding */
+	char bind[32];       /* call: names the result; vec: names the buffer's address */
+	uint32_t words[4];   /* vec */
+	char line[96];       /* the step as written, for messages */
 	uint32_t args[4];
 	int argCount;
 	int op;
@@ -240,17 +246,218 @@ static int addStep(const scriptStep* step)
 	return 1;
 }
 
-/* wait BOUND ADDR OP VALUE | write|or ADDR VALUE | sample ADDR | at [+]FRAME | call SYM [A0[,A1..]],
- * where an argument is a number or &SYMBOL. Returns -1 on a bad line, 0 when
- * the line is not a step. */
+/* Names bound by "call ... -> NAME" and "vec NAME ...", set as those steps run. A
+ * name used before it is bound, or never bound, ends the run naming the step. */
+enum
+{
+	kMaxBinds = 16,
+	kMaxVecs = 8,
+	kVecBytes = 16,
+	kNameLen = 32
+};
+typedef struct
+{
+	char name[kNameLen];
+	uint32_t value;
+	int bound;
+} binding;
+static binding s_binds[kMaxBinds];
+static int s_bindCount;
+static int s_vecCount;
+static const scriptStep* s_curStep;
+static int s_curIndex;
+
+/* The guest allocator that backs "vec" steps. sdfChipAllocDirect(size) returns the
+ * pointer itself, where sdfMemAllocDirect returns a handle that needs sdfMemLock. */
+static const char* s_vecAllocSym = "sdfChipAllocDirect";
+static int s_vecAllocAlign;   /* the allocator takes (size, align) rather than (size) */
+static uint32_t s_vecBase;
+static int s_vecUsed;
+
+static int validName(const char* name)
+{
+	size_t len = strlen(name);
+
+	if (len == 0 || len >= kNameLen || (name[0] >= '0' && name[0] <= '9'))
+		return 0;
+	for (size_t i = 0; i < len; i++)
+	{
+		char c = name[i];
+
+		if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'))
+			return 0;
+	}
+	return 1;
+}
+
+static int declareBinding(const char* name, const char* line)
+{
+	if (!validName(name))
+	{
+		fprintf(stderr, "[script] bad binding name '%s' in: %s\n", name, line);
+		return 0;
+	}
+	for (int i = 0; i < s_bindCount; i++)
+	{
+		if (strcmp(s_binds[i].name, name) == 0)
+		{
+			fprintf(stderr, "[script] $%s is bound twice, second in: %s\n", name, line);
+			return 0;
+		}
+	}
+	if (s_bindCount == kMaxBinds)
+	{
+		fprintf(stderr, "[script] at most %d bindings: %s\n", kMaxBinds, line);
+		return 0;
+	}
+	snprintf(s_binds[s_bindCount++].name, kNameLen, "%s", name);
+	return 1;
+}
+
+/* The binding named by an address's [*]$NAME[+OFF][:SIZE] base, or "" when it names a symbol. */
+static void addrVar(const char* text, char* out)
+{
+	int len;
+
+	out[0] = '\0';
+	if (*text == '*')
+		text++;
+	if (*text != '$')
+		return;
+	len = (int)strcspn(text + 1, "+:");
+	if (len >= kNameLen)
+		len = kNameLen - 1;
+	snprintf(out, kNameLen, "%.*s", len, text + 1);
+}
+
+static int stepIndexOf(const char* name)
+{
+	for (int i = 0; i < s_stepCount; i++)
+	{
+		const scriptStep* s = &s_steps[i];
+
+		if ((s->kind == kStepVec || (s->kind == kStepCall && s->bind[0])) &&
+		    strcmp(s->bind, name) == 0)
+			return i;
+	}
+	return -1;
+}
+
+static int checkUse(const char* name, int use)
+{
+	int def = stepIndexOf(name);
+
+	if (def < 0)
+	{
+		fprintf(stderr, "[script] step %d (%s): unknown binding $%s\n", use + 1, s_steps[use].line, name);
+		return 0;
+	}
+	if (def >= use)
+	{
+		fprintf(stderr, "[script] step %d (%s): $%s is used before its step %d binds it\n", use + 1,
+			s_steps[use].line, name, def + 1);
+		return 0;
+	}
+	return 1;
+}
+
+/* Checks every $NAME in the steps, once the whole script is read so that a name
+ * bound later is told apart from one never bound. */
+static int checkBindings(void)
+{
+	for (int i = 0; i < s_stepCount; i++)
+	{
+		const scriptStep* s = &s_steps[i];
+		char var[kNameLen];
+
+		for (int a = 0; a < s->argCount; a++)
+		{
+			if (s->argVar[a][0] && !checkUse(s->argVar[a], i))
+				return 0;
+		}
+		if (s->kind == kStepWait || s->kind == kStepWrite || s->kind == kStepSample)
+		{
+			addrVar(s->addr, var);
+			if (var[0] && !checkUse(var, i))
+				return 0;
+		}
+	}
+	return 1;
+}
+
+static int lookupBinding(const char* name, uint32_t* value, int quiet)
+{
+	for (int i = 0; i < s_bindCount; i++)
+	{
+		if (strcmp(s_binds[i].name, name) != 0)
+			continue;
+		if (!s_binds[i].bound)
+		{
+			if (!quiet)
+				fprintf(stderr, "[step] %s: $%s is used before its call has run\n",
+					s_curStep ? s_curStep->line : "sample", name);
+			return 0;
+		}
+		*value = s_binds[i].value;
+		return 1;
+	}
+	if (!quiet)
+		fprintf(stderr, "[step] %s: unknown binding $%s\n", s_curStep ? s_curStep->line : "sample", name);
+	return 0;
+}
+
+static void setBinding(const char* name, uint32_t value)
+{
+	for (int i = 0; i < s_bindCount; i++)
+	{
+		if (strcmp(s_binds[i].name, name) == 0)
+		{
+			s_binds[i].value = value;
+			s_binds[i].bound = 1;
+		}
+	}
+}
+
+/* Splits "A, B C" on spaces and commas, in place. */
+static int splitArgs(char* text, char** out, int max)
+{
+	int n = 0;
+	char* tok = strtok(text, " \t\r\n,");
+
+	while (tok)
+	{
+		if (n == max)
+			return -1;
+		out[n++] = tok;
+		tok = strtok(NULL, " \t\r\n,");
+	}
+	return n;
+}
+
+static int isVerb(const char* line, const char* verb)
+{
+	size_t len = strlen(verb);
+
+	line += strspn(line, " \t");
+	return strncmp(line, verb, len) == 0 && (line[len] == ' ' || line[len] == '\t');
+}
+
+/* wait BOUND ADDR OP VALUE | write|or ADDR VALUE | sample ADDR | at [+]FRAME |
+ * vec NAME W0 W1 W2 W3 | call SYM [A0 A1 ..] [-> NAME], where an argument is a
+ * number, &SYMBOL or $NAME (commas between arguments are allowed), and an ADDR may
+ * use $NAME as its symbol. Returns -1 on a bad line, 0 when the line is not a step. */
 static int parseStep(const char* line)
 {
 	scriptStep step;
 	char op[8];
-	char list[160];
-	int n;
 
 	memset(&step, 0, sizeof(step));
+	{
+		const char* from = line + strspn(line, " \t");
+		size_t len = strcspn(from, "\r\n");
+
+		snprintf(step.line, sizeof(step.line), "%.*s", (int)len, from);
+	}
 	if (sscanf(line, " wait %u %95s %7s %i", &step.bound, step.addr, op, (int*)&step.value) == 4)
 	{
 		step.kind = kStepWait;
@@ -287,32 +494,94 @@ static int parseStep(const char* line)
 		step.relative = strchr(line, '+') != NULL;
 		return addStep(&step) ? 1 : -1;
 	}
-	n = sscanf(line, " call %63s %159s", step.symbol, list);
-	if (n >= 1 && strncmp(line + strspn(line, " "), "call", 4) == 0)
+	if (isVerb(line, "vec"))
 	{
-		const char* at = n == 2 ? list : "";
+		char text[160];
+		char* tok[8];
+		int count;
 
-		step.kind = kStepCall;
-		while (*at && step.argCount < 4)
+		snprintf(text, sizeof(text), "%s", line + strspn(line, " \t") + 3);
+		count = splitArgs(text, tok, 8);
+		if (count != 5 || s_vecCount == kMaxVecs)
 		{
-			if (*at == '&')
-			{
-				int len = (int)strcspn(at + 1, ",");
+			fprintf(stderr, "[script] vec takes NAME and 4 words, at most %d vecs: %s\n", kMaxVecs, step.line);
+			return -1;
+		}
+		for (int w = 0; w < 4; w++)
+		{
+			char* end;
 
-				if (len == 0 || len >= (int)sizeof(step.argSym[0]))
+			step.words[w] = (uint32_t)strtoul(tok[1 + w], &end, 0);
+			if (*end)
+			{
+				fprintf(stderr, "[script] bad vec word '%s': %s\n", tok[1 + w], step.line);
+				return -1;
+			}
+		}
+		step.kind = kStepVec;
+		snprintf(step.bind, sizeof(step.bind), "%s", tok[0]);
+		if (!declareBinding(step.bind, step.line))
+			return -1;
+		s_vecCount++;
+		return addStep(&step) ? 1 : -1;
+	}
+	if (isVerb(line, "call"))
+	{
+		char text[192];
+		char* tok[16];
+		int count;
+		int stop;
+
+		snprintf(text, sizeof(text), "%s", line + strspn(line, " \t") + 4);
+		count = splitArgs(text, tok, 16);
+		if (count < 1)
+			return -1;
+		snprintf(step.symbol, sizeof(step.symbol), "%s", tok[0]);
+		stop = count;
+		for (int t = 1; t < count; t++)
+		{
+			if (strcmp(tok[t], "->") == 0)
+				stop = t;
+		}
+		step.kind = kStepCall;
+		for (int t = 1; t < stop; t++)
+		{
+			const char* at = tok[t];
+			int a = step.argCount;
+
+			if (a == 4)
+				return -1;
+			if (*at == '&' || *at == '$')
+			{
+				char* dst = *at == '&' ? step.argSym[a] : step.argVar[a];
+				size_t cap = *at == '&' ? sizeof(step.argSym[0]) : sizeof(step.argVar[0]);
+
+				if (at[1] == '\0' || strlen(at + 1) >= cap)
 					return -1;
-				snprintf(step.argSym[step.argCount], sizeof(step.argSym[0]), "%.*s", len, at + 1);
-				at += 1 + len;
+				snprintf(dst, cap, "%s", at + 1);
 			}
 			else
-				step.args[step.argCount] = (uint32_t)strtoul(at, (char**)&at, 0);
+			{
+				char* end;
+
+				step.args[a] = (uint32_t)strtoul(at, &end, 0);
+				if (*end)
+					return -1;
+			}
 			step.argCount++;
-			if (*at == ',')
-				at++;
-			else
-				break;
 		}
-		return *at == '\0' && addStep(&step) ? 1 : -1;
+		if (stop < count)
+		{
+			if (stop + 2 != count)
+			{
+				fprintf(stderr, "[script] \"->\" takes one name: %s\n", step.line);
+				return -1;
+			}
+			snprintf(step.bind, sizeof(step.bind), "%s", tok[stop + 1]);
+			if (!declareBinding(step.bind, step.line))
+				return -1;
+		}
+		return addStep(&step) ? 1 : -1;
 	}
 	return 0;
 }
@@ -377,7 +646,7 @@ static int readScript(const char* path)
 		}
 	}
 	fclose(f);
-	return 1;
+	return checkBindings();
 }
 
 /* A register fed a different value at each call of one function.
@@ -595,71 +864,103 @@ static void onShutdown(void* user)
 }
 
 
-/* Resolves [*]SYM[+OFF][:SIZE] to a host pointer, or NULL with the reason
+/* [*]BASE[+OFF][:SIZE], where BASE is a symbol or a $binding. */
+typedef struct
+{
+	char name[64];
+	int deref;
+	int var;
+	uint32_t off;
+	uint32_t size;
+} addrRef;
+
+static int parseAddrRef(const char* text, addrRef* ref)
+{
+	const char* at = text;
+	int len;
+
+	memset(ref, 0, sizeof(*ref));
+	ref->size = 4;
+	if (*at == '*')
+	{
+		ref->deref = 1;
+		at++;
+	}
+	if (*at == '$')
+	{
+		ref->var = 1;
+		at++;
+	}
+	len = (int)strcspn(at, "+:");
+	if (len == 0 || len >= (int)sizeof(ref->name))
+		return 0;
+	snprintf(ref->name, sizeof(ref->name), "%.*s", len, at);
+	at += len;
+	if (*at == '+')
+		ref->off = (uint32_t)strtoul(at + 1, (char**)&at, 0);
+	if (*at == ':')
+		ref->size = (uint32_t)strtoul(at + 1, (char**)&at, 0);
+	return 1;
+}
+
+static int refBase(const addrRef* ref, uint32_t* guest, int quiet)
+{
+	if (ref->var)
+		return lookupBinding(ref->name, guest, quiet);
+	*guest = pcsx2hook_find_symbol(s_ctx, ref->name);
+	if (*guest == 0)
+	{
+		if (!quiet)
+			fprintf(stderr, "[step] no symbol named %s; is a map loaded?\n", ref->name);
+		return 0;
+	}
+	return 1;
+}
+
+/* Resolves [*]BASE[+OFF][:SIZE] to a host pointer, or NULL with the reason
  * printed. */
 static void* resolveAddr(const char* text, uint32_t* size)
 {
-	char sym[64];
-	const char* at = text;
-	int deref = 0;
-	uint32_t off = 0;
+	addrRef ref;
 	uint32_t guest;
 	void* host;
 
 	*size = 4;
-	if (*at == '*')
+	if (!parseAddrRef(text, &ref))
 	{
-		deref = 1;
-		at++;
-	}
-	int len = (int)strcspn(at, "+:");
-	if (len == 0 || len >= (int)sizeof(sym))
-		return NULL;
-	snprintf(sym, sizeof(sym), "%.*s", len, at);
-	at += len;
-	if (*at == '+')
-		off = (uint32_t)strtoul(at + 1, (char**)&at, 0);
-	if (*at == ':')
-		*size = (uint32_t)strtoul(at + 1, (char**)&at, 0);
-	guest = pcsx2hook_find_symbol(s_ctx, sym);
-	if (guest == 0)
-	{
-		fprintf(stderr, "[step] no symbol named %s; is a map loaded?\n", sym);
+		fprintf(stderr, "[step] cannot read the address '%s'\n", text);
 		return NULL;
 	}
-	if (deref)
+	*size = ref.size;
+	if (!refBase(&ref, &guest, 0))
+		return NULL;
+	if (ref.deref)
 	{
 		uint32_t* pointer = (uint32_t*)pcsx2hook_map_guest(s_ctx, guest, 4);
 
 		if (!pointer || *pointer == 0)
 		{
-			fprintf(stderr, "[step] *%s is null or unmapped\n", sym);
+			fprintf(stderr, "[step] *%s%s is null or unmapped\n", ref.var ? "$" : "", ref.name);
 			return NULL;
 		}
 		guest = *pointer;
 	}
-	host = pcsx2hook_map_guest(s_ctx, guest + off, *size);
+	host = pcsx2hook_map_guest(s_ctx, guest + ref.off, ref.size);
 	if (!host)
-		fprintf(stderr, "[step] %s+%u is not mapped\n", sym, off);
+		fprintf(stderr, "[step] %s%s+%u is not mapped\n", ref.var ? "$" : "", ref.name, ref.off);
 	return host;
 }
 
 /* A dereferenced sample of a null pointer reads as null; a wait on one is still an error. */
 static int sampleIsNull(const char* text)
 {
-	char sym[64];
+	addrRef ref;
 	uint32_t guest;
 	uint32_t* pointer;
-	int len;
 
-	if (text[0] != '*')
+	if (!parseAddrRef(text, &ref) || !ref.deref || !refBase(&ref, &guest, 1))
 		return 0;
-	len = (int)strcspn(text + 1, "+:");
-	if (len == 0 || len >= (int)sizeof(sym))
-		return 0;
-	snprintf(sym, sizeof(sym), "%.*s", len, text + 1);
-	guest = pcsx2hook_find_symbol(s_ctx, sym);
-	pointer = guest ? (uint32_t*)pcsx2hook_map_guest(s_ctx, guest, 4) : NULL;
+	pointer = (uint32_t*)pcsx2hook_map_guest(s_ctx, guest, 4);
 	return pointer && *pointer == 0;
 }
 
@@ -708,6 +1009,38 @@ static void failScript(void)
 	pcsx2hook_request_stop(s_ctx);
 }
 
+/* One allocation carves every vec: the first vec step calls the allocator from the anchor,
+ * for room for kMaxVecs plus the slack to align the start to 16. */
+static int allocVecBuffer(void)
+{
+	uint32_t pc, args[2], got;
+	int argc = 1;
+
+	if (s_vecBase)
+		return 1;
+	pc = pcsx2hook_find_symbol(s_ctx, s_vecAllocSym);
+	if (pc == 0)
+	{
+		fprintf(stderr, "[step] %s: no allocator named %s; is a map loaded?\n", s_curStep->line, s_vecAllocSym);
+		return 0;
+	}
+	args[0] = kMaxVecs * kVecBytes + kVecBytes;
+	if (s_vecAllocAlign)
+	{
+		args[1] = kVecBytes;
+		argc = 2;
+	}
+	got = pcsx2hook_call_ee(s_ctx, pc, args, argc);
+	if (got == 0)
+	{
+		fprintf(stderr, "[step] %s: %s(%u) returned 0\n", s_curStep->line, s_vecAllocSym, args[0]);
+		return 0;
+	}
+	s_vecBase = (got + kVecBytes - 1) & ~(uint32_t)(kVecBytes - 1);
+	fprintf(stderr, "[step] %s(%u) = %08X, vecs from %08X\n", s_vecAllocSym, args[0], got, s_vecBase);
+	return 1;
+}
+
 /* Runs the steps that are due. A wait that has not come true holds the rest,
  * and one past its bound ends the run with exit code 1. */
 static void runSteps(void)
@@ -716,6 +1049,8 @@ static void runSteps(void)
 	{
 		scriptStep* step = &s_steps[s_stepCursor];
 
+		s_curStep = step;
+		s_curIndex = s_stepCursor + 1;
 		if (step->kind == kStepWait)
 		{
 			uint32_t have;
@@ -786,10 +1121,35 @@ static void runSteps(void)
 			fprintf(stderr, "[step] frame %u: %s %s %u\n", s_frame, step->addr,
 				step->orBits ? "|=" : "=", step->value);
 		}
+		else if (step->kind == kStepVec)
+		{
+			uint32_t guest;
+			void* at;
+
+			if (!allocVecBuffer())
+			{
+				failScript();
+				return;
+			}
+			guest = s_vecBase + (uint32_t)s_vecUsed * kVecBytes;
+			at = pcsx2hook_map_guest(s_ctx, guest, kVecBytes);
+			if (!at)
+			{
+				fprintf(stderr, "[step] %s: scratch %08X is not mapped\n", step->line, guest);
+				failScript();
+				return;
+			}
+			memcpy(at, step->words, kVecBytes);
+			s_vecUsed++;
+			setBinding(step->bind, guest);
+			fprintf(stderr, "[step] frame %u: vec %s at %08X = %08X %08X %08X %08X\n", s_frame,
+				step->bind, guest, step->words[0], step->words[1], step->words[2], step->words[3]);
+		}
 		else
 		{
 			uint32_t pc = pcsx2hook_find_symbol(s_ctx, step->symbol);
 			uint32_t args[4];
+			uint32_t result;
 
 			if (pc == 0)
 			{
@@ -810,9 +1170,20 @@ static void runSteps(void)
 						return;
 					}
 				}
+				else if (step->argVar[a][0] && !lookupBinding(step->argVar[a], &args[a], 0))
+				{
+					failScript();
+					return;
+				}
 			}
-			fprintf(stderr, "[step] frame %u: %s = %u\n", s_frame, step->symbol,
-				pcsx2hook_call_ee(s_ctx, pc, args, step->argCount));
+			result = pcsx2hook_call_ee(s_ctx, pc, args, step->argCount);
+			if (step->bind[0])
+			{
+				setBinding(step->bind, result);
+				fprintf(stderr, "[step] frame %u: %s = %u -> %s\n", s_frame, step->symbol, result, step->bind);
+			}
+			else
+				fprintf(stderr, "[step] frame %u: %s = %u\n", s_frame, step->symbol, result);
 		}
 		s_stepCursor++;
 	}
@@ -828,6 +1199,7 @@ static int onCallAnchor(pcsx2hook_regs* regs, void* user)
 	if (s_sampleCount && s_frame != s_sampleFrame)
 	{
 		s_sampleFrame = s_frame;
+		s_curStep = NULL;
 		for (int i = 0; i < s_sampleCount; i++)
 		{
 			uint32_t have;
@@ -932,9 +1304,13 @@ static void usage(FILE* f)
 		"  --script FILE       lines of \"FRAME BUTTON [HOLD]\", # comments, plus in-order steps from the\n"
 		"                      call anchor: \"wait BOUND ADDR OP VALUE\", \"write ADDR VALUE\",\n"
 		"                      \"or ADDR VALUE\", \"at [+]FRAME\",\n"
-		"                      \"call SYM [ARGS]\" (ADDR is [*]SYM[+OFF][:SIZE] or @FN, OP is eq ne ge\n"
-		"                      le gt lt, an arg may be &SYM) and \"+N BUTTON [HOLD]\" after a wait.\n"
+		"                      \"call SYM [ARGS] [-> NAME]\" (ADDR is [*]SYM[+OFF][:SIZE] or @FN, OP is\n"
+		"                      eq ne ge le gt lt, an arg may be &SYM or $NAME, a bound name; $NAME stands\n"
+		"                      for SYM in an ADDR), \"vec NAME W0 W1 W2 W3\" (16 aligned guest bytes, NAME\n"
+		"                      is their address) and \"+N BUTTON [HOLD]\" after a wait.\n"
 		"                      A wait past BOUND frames, or a run ending first, exits 1\n"
+		"  --vec-alloc SYM[:size|:size,align]  the guest allocator for vec steps, returning a\n"
+		"                      pointer (default sdfChipAllocDirect:size)\n"
 		"  --call F:SYM[:a0,a1,..]  call the guest function SYM at frame F; repeat for more\n"
 		"  --poke F:ADDR:VAL[:SIZE]  write guest memory at frame F, before any --call\n"
 		"  --call-anchor SYM   where those calls are made from, a function the game\n"
@@ -950,6 +1326,24 @@ static void usage(FILE* f)
 	for (int i = 0; i < kTraceCount; i++)
 		fprintf(f, " %s", kTraces[i].name);
 	fprintf(f, "\n");
+}
+
+/* SYMBOL[:size|:size,align]: the allocator for vec steps, called with the byte count and
+ * optionally the alignment, and returning the guest pointer. */
+static int parseVecAlloc(const char* text)
+{
+	const char* colon = strchr(text, ':');
+	static char sym[64];
+	size_t len = colon ? (size_t)(colon - text) : strlen(text);
+
+	if (len == 0 || len >= sizeof(sym))
+		return 0;
+	if (colon && strcmp(colon, ":size") != 0 && strcmp(colon, ":size,align") != 0)
+		return 0;
+	snprintf(sym, sizeof(sym), "%.*s", (int)len, text);
+	s_vecAllocSym = sym;
+	s_vecAllocAlign = colon && strcmp(colon, ":size,align") == 0;
+	return 1;
 }
 
 static int parseInterp(const char* list, unsigned* cpus)
@@ -1132,6 +1526,15 @@ int main(int argc, char** argv)
 				return 2;
 			}
 			s_callAnchor = v;
+			i++;
+		}
+		else if (strcmp(a, "--vec-alloc") == 0)
+		{
+			if (!v || !parseVecAlloc(v))
+			{
+				fprintf(stderr, "--vec-alloc takes SYMBOL[:size|:size,align]\n");
+				return 2;
+			}
 			i++;
 		}
 		else if (strcmp(a, "--call") == 0)

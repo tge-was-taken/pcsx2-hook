@@ -59,6 +59,17 @@ add_test(NAME pcsx2hook_run_control COMMAND pcsx2hook_api_test run-control)
 add_test(NAME pcsx2hook_call_ee COMMAND pcsx2hook_api_test call-ee)
 add_test(NAME pcsx2hook_write_sink COMMAND pcsx2hook_api_test write-sink)
 
+# Includes tools/cli.c and answers its library calls itself, so it links no library;
+# gc-sections drops the cli's main path, which is where the other calls are.
+if(NOT WIN32)
+add_executable(pcsx2hook_cli_script_test tests/cli_script_test.c)
+target_compile_options(pcsx2hook_cli_script_test PRIVATE -ffunction-sections)
+target_link_options(pcsx2hook_cli_script_test PRIVATE -Wl,--gc-sections)
+target_include_directories(pcsx2hook_cli_script_test PRIVATE include)
+set_target_properties(pcsx2hook_cli_script_test PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
+add_test(NAME pcsx2hook_cli_script COMMAND pcsx2hook_cli_script_test)
+endif()
+
 add_custom_target(pcsx2hook_resources
 	COMMAND ${CMAKE_COMMAND} -E create_symlink
 		"${PROJECT_SOURCE_DIR}/bin/resources" "$<TARGET_FILE_DIR:pcsx2hook_cli>/resources")
