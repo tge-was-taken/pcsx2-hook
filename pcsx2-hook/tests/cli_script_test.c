@@ -110,7 +110,7 @@ static void resetScript(void)
 	memset(s_binds, 0, sizeof(s_binds));
 	memset(s_mem, 0, sizeof(s_mem));
 	s_stepCount = s_stepCursor = s_bindCount = s_vecCount = 0;
-	s_stepFailed = s_vecBase = s_vecUsed = s_sampleCount = 0;
+	s_stepFailed = s_vecBase = s_scratchUsed = s_scratchPlanned = s_sampleCount = 0;
 	s_sampleFrame = (unsigned)-1;
 	s_stepWaits = s_waitsDone = 0;
 	s_allocResult = kBase + 0x1008;
@@ -124,7 +124,7 @@ static void resetScript(void)
 /* Parses lines and runs the whole-script check, as readScript does. */
 static int load(const char* const* lines, int count)
 {
-	char buf[192];
+	char buf[1300];
 
 	resetScript();
 	for (int i = 0; i < count; i++)
@@ -182,6 +182,175 @@ static void testParse(void)
 	CHECK(!loadOne("vec v 1 2 3"));
 	CHECK(!loadOne("vec v 1 2 3 4 5"));
 	CHECK(!loadOne("vec v 1 2 3 zz"));
+}
+
+static void testPeekParse(void)
+{
+	const char* chain[] = {
+		"call evtGetUnitHandle 1 -> effect",
+		"peek work $effect+0x18",
+		"peek handle $work+0xC",
+		"peek sym unitSlot+4",
+		"peek deref *unitSlot+8",
+	};
+
+	CHECK(load(chain, 5));
+	CHECK(s_steps[1].kind == kStepPeek && strcmp(s_steps[1].bind, "work") == 0 &&
+	      strcmp(s_steps[1].addr, "$effect+0x18") == 0);
+	CHECK(strcmp(s_steps[2].addr, "$work+0xC") == 0 && strcmp(s_steps[4].addr, "*unitSlot+8") == 0);
+	CHECK(!loadOne("peek"));
+	CHECK(!loadOne("peek a"));
+	CHECK(!loadOne("peek a unitSlot b"));
+	CHECK(!loadOne("peek a unitSlot:2"));        /* a word, not a byte or a half */
+	CHECK(!loadOne("peek 9a unitSlot"));
+	CHECK(!loadOne("peek a $ghost+4"));          /* unbound: unknown */
+	{
+		const char* before[] = {"peek a $b+4", "call evtLoadUnit -> b"};
+		const char* twice[] = {"peek a unitSlot", "peek a unitSlot"};
+
+		CHECK(!load(before, 2));                 /* used before its step binds it */
+		CHECK(!load(twice, 2));
+	}
+}
+
+static void testPeekRun(void)
+{
+	const char* chain[] = {
+		"call evtGetUnitHandle 7 -> effect",   /* effect = kBase + 0x200 */
+		"peek work $effect+0x18",
+		"peek handle $work+0xC",
+		"peek viaSym unitSlot+4",
+		"peek viaPtr *unitSlot+8",
+		"call evtLoadUnit $handle,$viaSym",
+	};
+
+	CHECK(load(chain, 6));
+	memcpy(s_mem + 0x218, &(uint32_t){kBase + 0x400}, 4);   /* work */
+	memcpy(s_mem + 0x40C, &(uint32_t){0xCAFE}, 4);          /* handle */
+	memcpy(s_mem + 0x104, &(uint32_t){0x1234}, 4);          /* unitSlot+4 */
+	memcpy(s_mem + 0x100, &(uint32_t){kBase + 0x500}, 4);   /* unitSlot holds a pointer */
+	memcpy(s_mem + 0x508, &(uint32_t){0x77}, 4);
+	runSteps();
+	CHECK(!s_stepFailed && s_stepCursor == s_stepCount);
+	CHECK(s_lastArgs[0] == 0xCAFE && s_lastArgs[1] == 0x1234);
+	CHECK(s_binds[1].value == kBase + 0x400 && s_binds[4].value == 0x77);
+}
+
+/* An unreadable address, and a binding that is not bound when the step runs, each stop the run. */
+static void testPeekErrors(void)
+{
+	const char* unmapped[] = {"call evtGetUnitHandle 7 -> effect", "peek w $effect+0x9000000", "call evtLoadUnit $w"};
+	const char* nullPtr[] = {"peek w *unitSlot", "call evtLoadUnit $w"};
+
+	CHECK(load(unmapped, 3));
+	runSteps();
+	CHECK(s_stepFailed && s_stepCursor == 1 && !s_binds[1].bound);
+	CHECK(s_callCountSeen == 1);                 /* the peek stopped it before the last call */
+	CHECK(load(nullPtr, 2));                     /* unitSlot holds 0: *unitSlot is null */
+	runSteps();
+	CHECK(s_stepFailed && s_callCountSeen == 0);
+
+	/* runtime backstop for an unbound name, past the parse check */
+	resetScript();
+	CHECK(parseStep("peek w $ghost+4\n") == 1);
+	runSteps();
+	CHECK(s_stepFailed && !s_binds[0].bound);
+}
+
+static void testStr(void)
+{
+	char big[1100];
+	char line[1200];
+	const char* lines[] = {
+		"str path \"effect/e0001.pak\"",
+		"vec v 1 2 3 4",
+		"str other \"x\"",
+		"call evtLoadUnit $path,$other",
+	};
+	uint32_t a, v, o;
+
+	CHECK(load(lines, 4));
+	CHECK(s_steps[0].kind == kStepStr && strcmp(s_steps[0].text, "effect/e0001.pak") == 0);
+	runSteps();
+	CHECK(!s_stepFailed && s_stepCursor == s_stepCount);
+	a = (kBase + 0x1008 + 15) & ~15u;
+	v = a + 32;                                   /* "effect/e0001.pak" is 17 bytes with its NUL */
+	o = v + 16;
+	CHECK(s_lastArgs[0] == a && s_lastArgs[1] == o && (a & 15) == 0 && (o & 15) == 0);
+	CHECK(strcmp((char*)s_mem + (a - kBase), "effect/e0001.pak") == 0);
+	CHECK(word(v) == 1 && word(v + 12) == 4);     /* the str did not run into the vec */
+	CHECK(strcmp((char*)s_mem + (o - kBase), "x") == 0);
+	CHECK(s_mem[a - kBase + 17] == 0 && s_mem[a - kBase + 31] == 0);
+
+	/* the longest string that fits, and one byte more */
+	memset(big, 'p', sizeof(big));
+	big[kScratchUsable - 1] = '\0';              /* 1007 characters + NUL = 1008 */
+	snprintf(line, sizeof(line), "str long \"%s\"", big);
+	CHECK(loadOne(line) && strlen(s_steps[0].text) == kScratchUsable - 1);
+	runSteps();
+	CHECK(!s_stepFailed && strlen((char*)s_mem + (((kBase + 0x1008 + 15) & ~15u) - kBase)) == kScratchUsable - 1);
+	big[kScratchUsable - 1] = 'p';
+	big[kScratchUsable] = '\0';
+	snprintf(line, sizeof(line), "str long \"%s\"", big);
+	CHECK(!loadOne(line));
+	CHECK(loadOne("str empty \"\"") && s_steps[0].text[0] == 0);
+
+	/* the scratch budget is shared with vecs */
+	{
+		const char* full[] = {"str a \"p\"", "vec b 0 0 0 0"};
+
+		CHECK(load(full, 2) && s_scratchPlanned == 32);
+	}
+	memset(big, 'p', 900);
+	big[900] = '\0';
+	snprintf(line, sizeof(line), "str s1 \"%s\"", big);
+	{
+		const char* over[3];
+
+		over[0] = line;
+		over[1] = "vec v 0 0 0 0";
+		over[2] = "vec w 0 0 0 0";                 /* 912 + 32 fits; one more does not */
+		CHECK(load(over, 3));
+		over[2] = "str s2 \"0123456789abcde\"";    /* 16 bytes with its NUL: 912+16+16 = 944 */
+		CHECK(load(over, 3));
+		{
+			char more[100];
+			const char* many[5];
+
+			snprintf(more, sizeof(more), "str s3 \"%s\"", "0123456789012345678901234567890123456789012345678901234567890123456789");
+			many[0] = line; many[1] = over[1]; many[2] = over[2]; many[3] = more; many[4] = "vec z 0 0 0 0";
+			CHECK(!load(many, 4));                  /* 944 + 80 > 1008 */
+		}
+	}
+
+	/* malformed */
+	CHECK(!loadOne("str"));
+	CHECK(!loadOne("str a"));
+	CHECK(!loadOne("str a text"));
+	CHECK(!loadOne("str a \"unclosed"));
+	CHECK(!loadOne("str a \"x\" junk"));
+	CHECK(!loadOne("str \"x\""));
+	CHECK(!loadOne("str 1a \"x\""));
+
+	/* unbound-name control: a str's name is unknown before its step */
+	{
+		const char* before[] = {"call evtLoadUnit $s", "str s \"x\""};
+
+		CHECK(!load(before, 2));
+		CHECK(!loadOne("call evtLoadUnit $s"));
+	}
+	/* a full buffer at run time refuses by step: the allocation is smaller than the plan */
+	resetScript();
+	CHECK(parseStep("str a \"x\"\n") == 1);
+	s_scratchUsed = kScratchUsable - 8;
+	s_vecBase = kBase + 0x1010;
+	runSteps();
+	CHECK(s_stepFailed && !s_binds[0].bound);
+	/* an allocation that returns 0 still stops a str */
+	CHECK(load(lines, 1));
+	s_allocResult = 0;
+	runSteps();
+	CHECK(s_stepFailed && !s_binds[0].bound);
 }
 
 static void testFloatArgs(void)
@@ -386,7 +555,7 @@ static void testAllocOption(void)
 
 		CHECK(load(lines, 1));
 		runSteps();
-		CHECK(s_lastArgc == 2 && s_lastArgs[0] == 144 && s_lastArgs[1] == 16);
+		CHECK(s_lastArgc == 2 && s_lastArgs[0] == kScratchBytes && s_lastArgs[1] == 16);
 	}
 	CHECK(!parseVecAlloc("x:bogus") && !parseVecAlloc(":size"));
 	CHECK(parseVecAlloc("sdfChipAllocDirect") && !s_vecAllocAlign);
@@ -395,6 +564,10 @@ static void testAllocOption(void)
 int main(void)
 {
 	testParse();
+	testPeekParse();
+	testPeekRun();
+	testPeekErrors();
+	testStr();
 	testFloatArgs();
 	testSequence();
 	testComments();

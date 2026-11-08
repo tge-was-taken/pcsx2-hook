@@ -72,7 +72,9 @@ typedef enum
 	kStepCall,
 	kStepAt,
 	kStepSample,
-	kStepVec
+	kStepVec,
+	kStepPeek,
+	kStepStr
 } stepKind;
 
 typedef struct
@@ -85,6 +87,7 @@ typedef struct
 	char argVar[4][32];  /* call: a nonempty entry is the value of that binding */
 	char bind[32];       /* call: names the result; vec: names the buffer's address */
 	uint32_t words[4];   /* vec */
+	char text[1008];     /* str: the string, which is also the most the scratch buffer holds */
 	char line[96];       /* the step as written, for messages */
 	uint32_t args[4];
 	int argCount;
@@ -255,6 +258,8 @@ enum
 	kMaxBinds = 16,
 	kMaxVecs = 8,
 	kVecBytes = 16,
+	kScratchBytes = 1024,                      /* one guest allocation for every vec and str */
+	kScratchUsable = kScratchBytes - 16,       /* what is left once its start is aligned up */
 	kNameLen = 32
 };
 typedef struct
@@ -274,7 +279,8 @@ static int s_curIndex;
 static const char* s_vecAllocSym = "sdfChipAllocDirect";
 static int s_vecAllocAlign;   /* the allocator takes (size, align) rather than (size) */
 static uint32_t s_vecBase;
-static int s_vecUsed;
+static int s_scratchUsed;     /* bytes carved so far */
+static int s_scratchPlanned;  /* bytes the parsed steps will carve */
 
 static int validName(const char* name)
 {
@@ -338,7 +344,7 @@ static int stepIndexOf(const char* name)
 	{
 		const scriptStep* s = &s_steps[i];
 
-		if ((s->kind == kStepVec || (s->kind == kStepCall && s->bind[0])) &&
+		if ((s->kind == kStepVec || s->kind == kStepPeek || s->kind == kStepStr || (s->kind == kStepCall && s->bind[0])) &&
 		    strcmp(s->bind, name) == 0)
 			return i;
 	}
@@ -377,7 +383,8 @@ static int checkBindings(void)
 			if (s->argVar[a][0] && !checkUse(s->argVar[a], i))
 				return 0;
 		}
-		if (s->kind == kStepWait || s->kind == kStepWrite || s->kind == kStepSample)
+		if (s->kind == kStepWait || s->kind == kStepWrite || s->kind == kStepSample ||
+		    s->kind == kStepPeek)
 		{
 			addrVar(s->addr, var);
 			if (var[0] && !checkUse(var, i))
@@ -435,6 +442,17 @@ static int splitArgs(char* text, char** out, int max)
 	}
 	return n;
 }
+
+/* [*]BASE[+OFF][:SIZE], where BASE is a symbol or a $binding. */
+typedef struct
+{
+	char name[64];
+	int deref;
+	int var;
+	uint32_t off;
+	uint32_t size;
+} addrRef;
+static int parseAddrRef(const char* text, addrRef* ref);
 
 /* Raw bits when written 0x..., else a decimal float: f:0x3F800000 and f:1.0 are the same. */
 static int parseFloatArg(const char* text, uint32_t* bits)
@@ -512,6 +530,55 @@ static int parseStep(const char* line)
 		step.relative = strchr(line, '+') != NULL;
 		return addStep(&step) ? 1 : -1;
 	}
+	if (isVerb(line, "peek"))
+	{
+		char text[160];
+		char* tok[4];
+		addrRef ref;
+
+		snprintf(text, sizeof(text), "%s", line + strspn(line, " \t") + 4);
+		if (splitArgs(text, tok, 4) != 2 || !parseAddrRef(tok[1], &ref) || ref.size != 4)
+		{
+			fprintf(stderr, "[script] peek takes NAME and a 4 byte ADDR: %s\n", step.line);
+			return -1;
+		}
+		step.kind = kStepPeek;
+		snprintf(step.bind, sizeof(step.bind), "%s", tok[0]);
+		snprintf(step.addr, sizeof(step.addr), "%s", tok[1]);
+		if (strlen(tok[1]) >= sizeof(step.addr) || !declareBinding(step.bind, step.line))
+			return -1;
+		return addStep(&step) ? 1 : -1;
+	}
+	if (isVerb(line, "str"))
+	{
+		const char* at = line + strspn(line, " \t") + 3;
+		const char* open = strchr(at, '"');
+		const char* close = strrchr(at, '"');
+		char name[kNameLen];
+		int len;
+		int slot;
+
+		if (!open || close == open || sscanf(at, " %31s", name) != 1 || name[0] == '"' ||
+		    strspn(close + 1, " \t\r\n") != strlen(close + 1))
+		{
+			fprintf(stderr, "[script] str takes NAME and \"TEXT\": %s\n", step.line);
+			return -1;
+		}
+		len = (int)(close - open - 1);
+		slot = (len + 1 + kVecBytes - 1) / kVecBytes * kVecBytes;
+		if (len >= (int)sizeof(step.text) || s_scratchPlanned + slot > kScratchUsable)
+		{
+			fprintf(stderr, "[script] the scratch buffer holds %d bytes: %s\n", kScratchUsable, step.line);
+			return -1;
+		}
+		step.kind = kStepStr;
+		snprintf(step.text, sizeof(step.text), "%.*s", len, open + 1);
+		snprintf(step.bind, sizeof(step.bind), "%s", name);
+		if (!declareBinding(step.bind, step.line))
+			return -1;
+		s_scratchPlanned += slot;
+		return addStep(&step) ? 1 : -1;
+	}
 	if (isVerb(line, "vec"))
 	{
 		char text[160];
@@ -536,11 +603,17 @@ static int parseStep(const char* line)
 				return -1;
 			}
 		}
+		if (s_scratchPlanned + kVecBytes > kScratchUsable)
+		{
+			fprintf(stderr, "[script] the scratch buffer holds %d bytes: %s\n", kScratchUsable, step.line);
+			return -1;
+		}
 		step.kind = kStepVec;
 		snprintf(step.bind, sizeof(step.bind), "%s", tok[0]);
 		if (!declareBinding(step.bind, step.line))
 			return -1;
 		s_vecCount++;
+		s_scratchPlanned += kVecBytes;
 		return addStep(&step) ? 1 : -1;
 	}
 	if (isVerb(line, "sequence"))
@@ -641,7 +714,7 @@ static int parseStep(const char* line)
 
 static int readScript(const char* path)
 {
-	char line[192];
+	char line[1200];
 	FILE* f = fopen(path, "r");
 
 	if (!f)
@@ -917,16 +990,6 @@ static void onShutdown(void* user)
 }
 
 
-/* [*]BASE[+OFF][:SIZE], where BASE is a symbol or a $binding. */
-typedef struct
-{
-	char name[64];
-	int deref;
-	int var;
-	uint32_t off;
-	uint32_t size;
-} addrRef;
-
 static int parseAddrRef(const char* text, addrRef* ref)
 {
 	const char* at = text;
@@ -1063,7 +1126,7 @@ static void failScript(void)
 }
 
 /* One allocation carves every vec: the first vec step calls the allocator from the anchor,
- * for room for kMaxVecs plus the slack to align the start to 16. */
+ * for kScratchBytes: room for kMaxVecs vecs and strings, with the slack to align the start. */
 static int allocVecBuffer(void)
 {
 	uint32_t pc, args[2], got;
@@ -1077,7 +1140,7 @@ static int allocVecBuffer(void)
 		fprintf(stderr, "[step] %s: no allocator named %s; is a map loaded?\n", s_curStep->line, s_vecAllocSym);
 		return 0;
 	}
-	args[0] = kMaxVecs * kVecBytes + kVecBytes;
+	args[0] = kScratchBytes;
 	if (s_vecAllocAlign)
 	{
 		args[1] = kVecBytes;
@@ -1174,29 +1237,60 @@ static void runSteps(void)
 			fprintf(stderr, "[step] frame %u: %s %s %u\n", s_frame, step->addr,
 				step->orBits ? "|=" : "=", step->value);
 		}
-		else if (step->kind == kStepVec)
+		else if (step->kind == kStepPeek)
+		{
+			uint32_t value;
+
+			if (!readStepValue(step->addr, &value))
+			{
+				fprintf(stderr, "[step] %s: cannot read %s\n", step->line, step->addr);
+				failScript();
+				return;
+			}
+			setBinding(step->bind, value);
+			fprintf(stderr, "[step] frame %u: peek %s = %08X from %s\n", s_frame, step->bind, value,
+				step->addr);
+		}
+		else if (step->kind == kStepVec || step->kind == kStepStr)
 		{
 			uint32_t guest;
+			uint32_t size = kVecBytes;
 			void* at;
 
+			if (step->kind == kStepStr)
+				size = ((uint32_t)strlen(step->text) + 1 + kVecBytes - 1) / kVecBytes * kVecBytes;
 			if (!allocVecBuffer())
 			{
 				failScript();
 				return;
 			}
-			guest = s_vecBase + (uint32_t)s_vecUsed * kVecBytes;
-			at = pcsx2hook_map_guest(s_ctx, guest, kVecBytes);
+			if (s_scratchUsed + size > kScratchUsable)
+			{
+				fprintf(stderr, "[step] %s: the scratch buffer is full\n", step->line);
+				failScript();
+				return;
+			}
+			guest = s_vecBase + (uint32_t)s_scratchUsed;
+			at = pcsx2hook_map_guest(s_ctx, guest, size);
 			if (!at)
 			{
 				fprintf(stderr, "[step] %s: scratch %08X is not mapped\n", step->line, guest);
 				failScript();
 				return;
 			}
-			memcpy(at, step->words, kVecBytes);
-			s_vecUsed++;
+			memset(at, 0, size);
+			if (step->kind == kStepStr)
+				memcpy(at, step->text, strlen(step->text));
+			else
+				memcpy(at, step->words, kVecBytes);
+			s_scratchUsed += (int)size;
 			setBinding(step->bind, guest);
-			fprintf(stderr, "[step] frame %u: vec %s at %08X = %08X %08X %08X %08X\n", s_frame,
-				step->bind, guest, step->words[0], step->words[1], step->words[2], step->words[3]);
+			if (step->kind == kStepStr)
+				fprintf(stderr, "[step] frame %u: str %s at %08X = \"%s\"\n", s_frame, step->bind, guest,
+					step->text);
+			else
+				fprintf(stderr, "[step] frame %u: vec %s at %08X = %08X %08X %08X %08X\n", s_frame,
+					step->bind, guest, step->words[0], step->words[1], step->words[2], step->words[3]);
 		}
 		else
 		{
@@ -1369,13 +1463,16 @@ static void usage(FILE* f)
 		"  --script FILE       lines of \"FRAME BUTTON [HOLD]\", # comments, plus in-order steps from the\n"
 		"                      call anchor: \"wait BOUND ADDR OP VALUE\", \"write ADDR VALUE\",\n"
 		"                      \"or ADDR VALUE\", \"at [+]FRAME\",\n"
-		"                      \"call SYM [ARGS] [-> NAME]\" (an arg f:0x3F800000 or f:1.5 is a float, in $f12 up, counted apart from the\n"
-		"                      ints; \"sequence N [A B C]\" is dds3AdminiCallSequence(N, A, B, C); ADDR is [*]SYM[+OFF][:SIZE] or @FN, OP is\n"
-		"                      eq ne ge le gt lt, an arg may be &SYM or $NAME, a bound name; $NAME stands\n"
-		"                      for SYM in an ADDR), \"vec NAME W0 W1 W2 W3\" (16 aligned guest bytes, NAME\n"
-		"                      is their address) and \"+N BUTTON [HOLD]\" after a wait.\n"
+		"                      \"call SYM [ARGS] [-> NAME]\" (an arg is a number, &SYM, $NAME for a bound\n"
+		"                      name, or f:0x3F800000 / f:1.5 for a float in $f12 up, counted apart from\n"
+		"                      the ints), \"sequence N [A B C]\" (dds3AdminiCallSequence(N, A, B, C)),\n"
+		"                      \"peek NAME ADDR\" (binds the word at ADDR), \"vec NAME W0 W1 W2 W3\" and\n"
+		"                      \"str NAME \\\"TEXT\\\"\" (guest scratch memory, NAME is its address; 1008\n"
+		"                      bytes in all), and \"+N BUTTON [HOLD]\" after a wait. ADDR is\n"
+		"                      [*]SYM[+OFF][:SIZE] or @FN, with $NAME in place of SYM; OP is eq ne ge le\n"
+		"                      gt lt.\n"
 		"                      A wait past BOUND frames, or a run ending first, exits 1\n"
-		"  --vec-alloc SYM[:size|:size,align]  the guest allocator for vec steps, returning a\n"
+		"  --vec-alloc SYM[:size|:size,align]  the guest allocator for vec and str steps, returning a\n"
 		"                      pointer (default sdfChipAllocDirect:size)\n"
 		"  --call F:SYM[:a0,a1,..]  call the guest function SYM at frame F; repeat for more\n"
 		"  --poke F:ADDR:VAL[:SIZE]  write guest memory at frame F, before any --call\n"
