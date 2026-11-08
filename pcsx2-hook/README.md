@@ -179,5 +179,8 @@ the upstream file. That is what keeps a rebase cheap; check it when you touch on
 `pcsx2-hook/check.sh` syntax-checks every source in a couple of seconds with no configure step. It
 does not link, so it narrows what the real build has to catch rather than replacing it.
 
+Open: `check.sh` fails on `src/core.cpp`, `src/gs.cpp` and `src/host.cpp` (`host.h` uses `std::function`
+without including `<functional>`); it did so before the CLI script work too, at `6eb9068db`.
+
 `-Wl,--no-undefined` is on the library on purpose: a shared library links with unresolved symbols by
 default, so without it a successful link tells you nothing.

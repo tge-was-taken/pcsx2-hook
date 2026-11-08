@@ -88,6 +88,8 @@ typedef struct
 	char line[96];       /* the step as written, for messages */
 	uint32_t args[4];
 	int argCount;
+	uint32_t fargs[4];   /* call: float arguments as raw bits, in $f12 up; counted apart from args */
+	int fargCount;
 	int op;
 	uint32_t value;
 	unsigned bound;
@@ -434,12 +436,28 @@ static int splitArgs(char* text, char** out, int max)
 	return n;
 }
 
+/* Raw bits when written 0x..., else a decimal float: f:0x3F800000 and f:1.0 are the same. */
+static int parseFloatArg(const char* text, uint32_t* bits)
+{
+	char* end;
+
+	if (text[0] == '0' && (text[1] == 'x' || text[1] == 'X'))
+		*bits = (uint32_t)strtoul(text, &end, 16);
+	else
+	{
+		float f = strtof(text, &end);
+
+		memcpy(bits, &f, sizeof(*bits));
+	}
+	return text[0] != '\0' && *end == '\0';
+}
+
 static int isVerb(const char* line, const char* verb)
 {
 	size_t len = strlen(verb);
 
 	line += strspn(line, " \t");
-	return strncmp(line, verb, len) == 0 && (line[len] == ' ' || line[len] == '\t');
+	return strncmp(line, verb, len) == 0 && strchr(" \t\r\n", line[len]) != NULL;
 }
 
 /* wait BOUND ADDR OP VALUE | write|or ADDR VALUE | sample ADDR | at [+]FRAME |
@@ -525,6 +543,31 @@ static int parseStep(const char* line)
 		s_vecCount++;
 		return addStep(&step) ? 1 : -1;
 	}
+	if (isVerb(line, "sequence"))
+	{
+		char text[160];
+		char* tok[8];
+		char synth[192] = "call dds3AdminiCallSequence";
+		int count;
+		int ok;
+
+		snprintf(text, sizeof(text), "%s", line + strspn(line, " \t") + 8);
+		count = splitArgs(text, tok, 8);
+		if (count < 1 || count > 4)
+		{
+			fprintf(stderr, "[script] sequence takes N and up to 3 arguments: %s\n", step.line);
+			return -1;
+		}
+		for (int t = 0; t < 4; t++)
+		{
+			strncat(synth, " ", sizeof(synth) - strlen(synth) - 1);
+			strncat(synth, t < count ? tok[t] : "0", sizeof(synth) - strlen(synth) - 1);
+		}
+		ok = parseStep(synth) == 1;
+		if (ok)
+			snprintf(s_steps[s_stepCount - 1].line, sizeof(step.line), "%s", step.line);
+		return ok ? 1 : -1;
+	}
 	if (isVerb(line, "call"))
 	{
 		char text[192];
@@ -549,6 +592,16 @@ static int parseStep(const char* line)
 			const char* at = tok[t];
 			int a = step.argCount;
 
+			if (strncmp(at, "f:", 2) == 0)
+			{
+				if (step.fargCount == 4 || !parseFloatArg(at + 2, &step.fargs[step.fargCount]))
+				{
+					fprintf(stderr, "[script] bad float argument '%s': %s\n", at, step.line);
+					return -1;
+				}
+				step.fargCount++;
+				continue;
+			}
 			if (a == 4)
 				return -1;
 			if (*at == '&' || *at == '$')
@@ -1176,7 +1229,19 @@ static void runSteps(void)
 					return;
 				}
 			}
-			result = pcsx2hook_call_ee(s_ctx, pc, args, step->argCount);
+			if (step->fargCount)
+			{
+				if (!pcsx2hook_call_ee_ex(s_ctx, pc, args, (size_t)step->argCount, step->fargs,
+						(size_t)step->fargCount, &result, NULL))
+				{
+					fprintf(stderr, "[step] %s: the call did not run: %s\n", step->line,
+						pcsx2hook_get_last_error(s_ctx));
+					failScript();
+					return;
+				}
+			}
+			else
+				result = pcsx2hook_call_ee(s_ctx, pc, args, step->argCount);
 			if (step->bind[0])
 			{
 				setBinding(step->bind, result);
@@ -1304,7 +1369,8 @@ static void usage(FILE* f)
 		"  --script FILE       lines of \"FRAME BUTTON [HOLD]\", # comments, plus in-order steps from the\n"
 		"                      call anchor: \"wait BOUND ADDR OP VALUE\", \"write ADDR VALUE\",\n"
 		"                      \"or ADDR VALUE\", \"at [+]FRAME\",\n"
-		"                      \"call SYM [ARGS] [-> NAME]\" (ADDR is [*]SYM[+OFF][:SIZE] or @FN, OP is\n"
+		"                      \"call SYM [ARGS] [-> NAME]\" (an arg f:0x3F800000 or f:1.5 is a float, in $f12 up, counted apart from the\n"
+		"                      ints; \"sequence N [A B C]\" is dds3AdminiCallSequence(N, A, B, C); ADDR is [*]SYM[+OFF][:SIZE] or @FN, OP is\n"
 		"                      eq ne ge le gt lt, an arg may be &SYM or $NAME, a bound name; $NAME stands\n"
 		"                      for SYM in an ADDR), \"vec NAME W0 W1 W2 W3\" (16 aligned guest bytes, NAME\n"
 		"                      is their address) and \"+N BUTTON [HOLD]\" after a wait.\n"

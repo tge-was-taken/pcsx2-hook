@@ -23,8 +23,16 @@ static const struct { const char* name; uint32_t addr; } kSymbols[] = {
 	{"sdfChipAllocDirect", 0x2020},
 	{"sdfMemAllocDirect", 0x2030},
 	{"unitSlot", kBase + 0x100},
+	{"sdfMotionSeek", 0x2040},
+	{"dds3AdminiCallSequence", 0x2050},
+	{"mdlSetMotionSpeedEx", 0x2060},
 };
-enum { kLoadUnit = 0x2000, kGetHandle = 0x2010, kAlloc = 0x2020 };
+enum { kLoadUnit = 0x2000, kGetHandle = 0x2010, kAlloc = 0x2020, kSeek = 0x2040, kSequence = 0x2050,
+	kSpeed = 0x2060 };
+
+/* The fake EE's float registers: call_ee_ex puts float argument k in $f12+k, as the eabi does,
+ * and the fake guest functions read them from here rather than from the argument list. */
+static uint32_t s_fpr[32];
 
 static uint32_t s_allocResult;
 static uint32_t s_lastArgs[8];
@@ -67,6 +75,30 @@ uint32_t pcsx2hook_call_ee(pcsx2hook_ctx* ctx, uint32_t pc, const uint32_t* args
 	return 0;
 }
 
+int pcsx2hook_call_ee_ex(pcsx2hook_ctx* ctx, uint32_t pc, const uint32_t* args, size_t count,
+	const uint32_t* fargBits, size_t fcount, uint32_t* v0, uint32_t* f0Bits)
+{
+	(void)ctx;
+	(void)f0Bits;
+	memset(s_fpr, 0, sizeof(s_fpr));
+	for (size_t i = 0; i < fcount; i++)
+		s_fpr[12 + i] = fargBits[i];
+	*v0 = pcsx2hook_call_ee(ctx, pc, args, count);
+	/* sdfMotionSeek(ctrlr, f32 frame) stores $f12 at ctrlr+0; mdlSetMotionSpeedEx(h, group, f32
+	 * speed) stores $f12 at h+32 */
+	if (pc == kSeek && count >= 1)
+		memcpy(s_mem + (args[0] - kBase), &s_fpr[12], 4);
+	if (pc == kSpeed && count >= 1)
+		memcpy(s_mem + (args[0] - kBase) + 32, &s_fpr[12], 4);
+	return 1;
+}
+
+const char* pcsx2hook_get_last_error(pcsx2hook_ctx* ctx)
+{
+	(void)ctx;
+	return "fake";
+}
+
 void pcsx2hook_request_stop(pcsx2hook_ctx* ctx)
 {
 	(void)ctx;
@@ -84,6 +116,9 @@ static void resetScript(void)
 	s_allocResult = kBase + 0x1008;
 	s_callCountSeen = 0;
 	s_curStep = NULL;
+	memset(s_fpr, 0, sizeof(s_fpr));
+	s_lastArgc = 0;
+	memset(s_lastArgs, 0, sizeof(s_lastArgs));
 }
 
 /* Parses lines and runs the whole-script check, as readScript does. */
@@ -147,6 +182,74 @@ static void testParse(void)
 	CHECK(!loadOne("vec v 1 2 3"));
 	CHECK(!loadOne("vec v 1 2 3 4 5"));
 	CHECK(!loadOne("vec v 1 2 3 zz"));
+}
+
+static void testFloatArgs(void)
+{
+	float one = 1.0f, half;
+	uint32_t bits;
+
+	memcpy(&half, &(uint32_t){0x3F000000}, 4);
+	CHECK(loadOne("call sdfMotionSeek &unitSlot f:0x3F800000"));
+	CHECK(s_steps[0].argCount == 1 && s_steps[0].fargCount == 1 && s_steps[0].fargs[0] == 0x3F800000u);
+	CHECK(loadOne("call sdfMotionSeek &unitSlot f:1.0"));
+	memcpy(&bits, &one, 4);
+	CHECK(s_steps[0].fargs[0] == bits);
+	/* counted apart: the float's position among the arguments does not move the ints */
+	CHECK(loadOne("call mdlSetMotionSpeedEx 5 f:0.5 2") && s_steps[0].argCount == 2);
+	CHECK(s_steps[0].args[0] == 5 && s_steps[0].args[1] == 2 && s_steps[0].fargs[0] == 0x3F000000u);
+	CHECK(loadOne("call mdlSetMotionSpeedEx 1 2 3 4 f:1 f:2 f:3 f:4"));
+	CHECK(!loadOne("call mdlSetMotionSpeedEx f:1 f:2 f:3 f:4 f:5"));
+	CHECK(!loadOne("call mdlSetMotionSpeedEx f:"));
+	CHECK(!loadOne("call mdlSetMotionSpeedEx f:abc"));
+
+	/* a float lands in $f12 and the int in $a0, where sdfMotionSeek reads them */
+	CHECK(loadOne("call sdfMotionSeek 0x100400 f:0x3F800000"));
+	runSteps();
+	CHECK(!s_stepFailed && s_fpr[12] == 0x3F800000u && s_lastArgc == 1 && s_lastArgs[0] == 0x100400);
+	CHECK(word(0x100400) == 0x3F800000u);
+	CHECK(loadOne("call mdlSetMotionSpeedEx 0x100400 3 f:0.5"));
+	runSteps();
+	CHECK(s_fpr[12] == 0x3F000000u && s_lastArgc == 2 && s_lastArgs[1] == 3 && word(0x100420) == 0x3F000000u);
+	(void)half;
+	/* with no float argument the plain call runs and $f12 stays clear */
+	CHECK(loadOne("call evtLoadUnit 3 3"));
+	runSteps();
+	CHECK(s_fpr[12] == 0 && s_lastArgc == 2);
+}
+
+static void testSequence(void)
+{
+	CHECK(loadOne("sequence 6"));
+	CHECK(strcmp(s_steps[0].symbol, "dds3AdminiCallSequence") == 0 && s_steps[0].argCount == 4);
+	CHECK(s_steps[0].args[0] == 6 && !s_steps[0].args[1] && !s_steps[0].args[2] && !s_steps[0].args[3]);
+	CHECK(loadOne("sequence 6 1 2 3") && s_steps[0].args[1] == 1 && s_steps[0].args[3] == 3);
+	CHECK(loadOne("sequence 6 1") && s_steps[0].args[1] == 1 && s_steps[0].args[2] == 0);
+	CHECK(strcmp(s_steps[0].line, "sequence 6 1") == 0);
+	CHECK(!loadOne("sequence"));   /* a bare verb is an error, not a skipped line */
+	CHECK(!loadOne("call") && !loadOne("vec"));
+	CHECK(!loadOne("sequence 6 1 2 3 4"));
+	CHECK(!loadOne("sequence 6x"));
+	CHECK(loadOne("sequence 6 1 0 0"));
+	runSteps();
+	CHECK(!s_stepFailed && s_lastArgc == 4 && s_lastArgs[0] == 6 && s_lastArgs[1] == 1);
+}
+
+/* # starts a comment anywhere: a commented-out step is not a step. */
+static void testComments(void)
+{
+	char path[] = "/tmp/cli_script_test_XXXXXX";
+	int fd = mkstemp(path);
+	FILE* f;
+
+	CHECK(fd >= 0);
+	f = fdopen(fd, "w");
+	fputs("# call evtLoadUnit 1\n   # sequence 6\ncall evtLoadUnit 2 # trailing\n\n#vec v 1 2 3 4\n", f);
+	fclose(f);
+	resetScript();
+	CHECK(readScript(path));
+	CHECK(s_stepCount == 1 && s_steps[0].args[0] == 2 && s_steps[0].argCount == 1);
+	remove(path);
 }
 
 static void testLimits(void)
@@ -292,6 +395,9 @@ static void testAllocOption(void)
 int main(void)
 {
 	testParse();
+	testFloatArgs();
+	testSequence();
+	testComments();
 	testLimits();
 	testBindingErrors();
 	testRuntimeBackstop();
