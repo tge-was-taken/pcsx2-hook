@@ -113,6 +113,9 @@ static void resetScript(void)
 	s_stepFailed = s_vecBase = s_scratchUsed = s_scratchPlanned = s_sampleCount = 0;
 	s_sampleFrame = (unsigned)-1;
 	s_stepWaits = s_waitsDone = 0;
+	s_ticksSeen = s_ticksStarted = 0;
+	s_ticksTarget = 0;
+	s_frame = 0;
 	s_allocResult = kBase + 0x1008;
 	s_callCountSeen = 0;
 	s_curStep = NULL;
@@ -421,6 +424,66 @@ static void testComments(void)
 	remove(path);
 }
 
+/* Writes TEXT to a file and loads it through readScript. */
+static int loadFile(const char* text)
+{
+	char path[] = "/tmp/cli_script_test_XXXXXX";
+	int fd = mkstemp(path);
+	FILE* f;
+	int ok;
+
+	CHECK(fd >= 0);
+	f = fdopen(fd, "w");
+	fputs(text, f);
+	fclose(f);
+	resetScript();
+	s_pressCount = 0;
+	ok = readScript(path);
+	remove(path);
+	return ok;
+}
+
+/* A line that is neither a step nor a press fails the load; comments and blanks do not. */
+static void testUnknownLines(void)
+{
+	CHECK(!loadFile("wait 30\n"));
+	CHECK(!loadFile("bogus\n"));
+	CHECK(!loadFile("call evtLoadUnit 1\nbogus\n"));
+	CHECK(loadFile("# a comment\n\n   \n\t# indented\ncall evtLoadUnit 1 # trailing\n\n"));
+	CHECK(s_stepCount == 1);
+	CHECK(loadFile("at 5\n30 cross\n40 cross 3\n"));
+	CHECK(s_pressCount == 2);
+}
+
+static void testTicks(void)
+{
+	/* ticks 0 lands on the frame its predecessors finish; ticks 5 lands 5 frames later */
+	CHECK(loadFile("at 10\nticks 0\n"));
+	CHECK(s_stepCount == 2 && s_steps[1].kind == kStepTicks && s_steps[1].value == 0);
+	s_frame = 9;
+	runSteps();
+	CHECK(s_stepCursor == 0);
+	s_frame = 12;
+	runSteps();
+	CHECK(s_stepCursor == s_stepCount && s_ticksTarget == 12 && !s_stepFailed);
+
+	CHECK(loadFile("at 10\nticks 5\n"));
+	s_frame = 12;
+	runSteps();
+	CHECK(s_stepCursor == 1 && s_ticksTarget == 17);
+	s_frame = 16;
+	runSteps();
+	CHECK(s_stepCursor == 1);
+	s_frame = 17;
+	runSteps();
+	CHECK(s_stepCursor == 2 && !s_stepFailed);
+
+	/* refused: a second ticks, a step after ticks, a bad count */
+	CHECK(!loadFile("ticks 1\nticks 2\n"));
+	CHECK(!loadFile("ticks 1\nat 3\n"));
+	CHECK(!loadFile("ticks\n") && !loadFile("ticks x\n") && !loadFile("ticks -1\n"));
+}
+
 static void testLimits(void)
 {
 	char names[20][40];
@@ -571,6 +634,8 @@ int main(void)
 	testFloatArgs();
 	testSequence();
 	testComments();
+	testUnknownLines();
+	testTicks();
 	testLimits();
 	testBindingErrors();
 	testRuntimeBackstop();

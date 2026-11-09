@@ -74,7 +74,8 @@ typedef enum
 	kStepSample,
 	kStepVec,
 	kStepPeek,
-	kStepStr
+	kStepStr,
+	kStepTicks
 } stepKind;
 
 typedef struct
@@ -110,6 +111,9 @@ static unsigned s_waitStart;
 static int s_waitStarted;
 static int s_stepFailed;
 static int s_stepWaits;
+static int s_ticksSeen;     /* a ticks step was parsed; it must be the last step */
+static int s_ticksStarted;
+static unsigned s_ticksTarget;
 static const char* const kOps[] = { "eq", "ne", "ge", "le", "gt", "lt" };
 
 /* A scheduled call into the guest: a game's own entry point, run at a chosen
@@ -245,6 +249,11 @@ static int addStep(const scriptStep* step)
 	if (s_stepCount == kMaxSteps)
 	{
 		fprintf(stderr, "a script holds at most %d steps\n", kMaxSteps);
+		return 0;
+	}
+	if (s_ticksSeen)
+	{
+		fprintf(stderr, "[script] ticks must be the last step: %s\n", step->line);
 		return 0;
 	}
 	s_steps[s_stepCount++] = *step;
@@ -479,9 +488,12 @@ static int isVerb(const char* line, const char* verb)
 }
 
 /* wait BOUND ADDR OP VALUE | write|or ADDR VALUE | sample ADDR | at [+]FRAME |
- * vec NAME W0 W1 W2 W3 | call SYM [A0 A1 ..] [-> NAME], where an argument is a
- * number, &SYMBOL or $NAME (commas between arguments are allowed), and an ADDR may
- * use $NAME as its symbol. Returns -1 on a bad line, 0 when the line is not a step. */
+ * peek NAME ADDR | str NAME "TEXT" | vec NAME W0 W1 W2 W3 | sequence N [A B C] |
+ * call SYM [A0 A1 ..] [-> NAME] | ticks N, where an argument is a number, &SYMBOL
+ * or $NAME (commas between arguments are allowed), and an ADDR may use $NAME as its
+ * symbol. ticks N runs N more frames after the steps before it, then stops the run
+ * at that frame (the capture point); it is the last step, at most once.
+ * Returns -1 on a bad line, 0 when the line is not a step. */
 static int parseStep(const char* line)
 {
 	scriptStep step;
@@ -529,6 +541,24 @@ static int parseStep(const char* line)
 		step.kind = kStepAt;
 		step.relative = strchr(line, '+') != NULL;
 		return addStep(&step) ? 1 : -1;
+	}
+	if (isVerb(line, "ticks"))
+	{
+		char* end;
+		const char* arg = line + strspn(line, " \t") + 5;
+
+		arg += strspn(arg, " \t");
+		step.value = (uint32_t)strtoul(arg, &end, 10);
+		if (end == arg || strspn(end, " \t\r\n") != strlen(end) || *arg == '-')
+		{
+			fprintf(stderr, "[script] ticks takes one frame count N: %s\n", step.line);
+			return -1;
+		}
+		step.kind = kStepTicks;
+		if (!addStep(&step))
+			return -1;
+		s_ticksSeen = 1;
+		return 1;
 	}
 	if (isVerb(line, "peek"))
 	{
@@ -753,8 +783,14 @@ static int readScript(const char* path)
 			snprintf(token, sizeof(token), "%u:%s:%u", frame, name, hold);
 		else if (sscanf(at, "%u %31s", &frame, name) == 2)
 			snprintf(token, sizeof(token), "%u:%s", frame, name);
-		else
+		else if (line[strspn(line, " \t\r\n")] == '\0')
 			continue;
+		else
+		{
+			fprintf(stderr, "%s: not a step or a press: %s", path, line);
+			fclose(f);
+			return 0;
+		}
 		if (segment)
 		{
 			segment = s_stepWaits;
@@ -1209,6 +1245,18 @@ static void runSteps(void)
 			}
 			strcpy(s_samples[s_sampleCount++], step->addr);
 		}
+		else if (step->kind == kStepTicks)
+		{
+			if (!s_ticksStarted)
+			{
+				s_ticksStarted = 1;
+				s_ticksTarget = s_frame + step->value;
+			}
+			if (s_frame < s_ticksTarget)
+				return;
+			fprintf(stderr, "[ticks] capture frame %u\n", s_frame);
+			pcsx2hook_request_stop(s_ctx);
+		}
 		else if (step->kind == kStepAt)
 		{
 			if (s_frame < step->value + (step->relative ? s_arrivals[s_waitsDone] : 0))
@@ -1462,7 +1510,8 @@ static void usage(FILE* f)
 		"  --press F:BUTTON[:N]  press BUTTON at frame F for N frames; repeat for more\n"
 		"  --script FILE       lines of \"FRAME BUTTON [HOLD]\", # comments, plus in-order steps from the\n"
 		"                      call anchor: \"wait BOUND ADDR OP VALUE\", \"write ADDR VALUE\",\n"
-		"                      \"or ADDR VALUE\", \"at [+]FRAME\",\n"
+		"                      \"or ADDR VALUE\", \"at [+]FRAME\", \"ticks N\" (last step: N more frames,\n"
+		"                      then print the capture frame and stop the run there),\n"
 		"                      \"call SYM [ARGS] [-> NAME]\" (an arg is a number, &SYM, $NAME for a bound\n"
 		"                      name, or f:0x3F800000 / f:1.5 for a float in $f12 up, counted apart from\n"
 		"                      the ints), \"sequence N [A B C]\" (dds3AdminiCallSequence(N, A, B, C)),\n"
