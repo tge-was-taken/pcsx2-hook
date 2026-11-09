@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -901,6 +902,82 @@ int pcsx2hook_write_framebuffer(pcsx2hook_ctx* ctx, const char* path) {
         return 0;
     }
     return pcsx2hook_write_png(ctx, path, pixels.data(), width, height);
+}
+
+int pcsx2hook_capture_frame(pcsx2hook_ctx* ctx, const char* directory) {
+    if (!ctx) return 0;
+    if (!directory || !*directory) {
+        directory = Config::get().getValue("PCSX2HOOK_DUMP_DIR");
+        if (!directory || !*directory) directory = "experiments/dumps";
+    }
+    const std::filesystem::path dir(directory);
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    if (ec) {
+        ctx->error = "cannot create capture directory: " + ec.message();
+        return 0;
+    }
+    if (!pcsx2hook_write_framebuffer(ctx, (dir / "display.png").string().c_str())) return 0;
+    pcsx2hook_gs_display shown{};
+    if (!pcsx2hook_read_gs_display(ctx, &shown)) return 0;
+    std::vector<uint8_t> regs(pcsx2hook_read_gs_registers(ctx, nullptr, 0));
+    if (regs.empty() || pcsx2hook_read_gs_registers(ctx, regs.data(), regs.size()) != regs.size()) {
+        ctx->error = "cannot read drawing registers";
+        return 0;
+    }
+    uint64_t frame[2] = {};
+    bool found[2] = {};
+    for (size_t at = 0; at + 16 <= regs.size(); at += 16) {
+        uint64_t value, reg;
+        std::memcpy(&value, regs.data() + at, 8);
+        std::memcpy(&reg, regs.data() + at + 8, 8);
+        if (reg == 0x4C || reg == 0x4D) {
+            frame[reg - 0x4C] = value;
+            found[reg - 0x4C] = true;
+        }
+    }
+    if (!found[0] || !found[1] || frame[0] != frame[1]) {
+        ctx->error = "capture requires matching FRAME_1 and FRAME_2 targets";
+        return 0;
+    }
+    const uint32_t block = uint32_t(frame[0] & 0x1FF) * 32;
+    const uint32_t fbw = uint32_t((frame[0] >> 16) & 0x3F);
+    const uint32_t psm = uint32_t((frame[0] >> 24) & 0x3F);
+    if (!fbw || !shown.width || !shown.height) {
+        ctx->error = "invalid frame buffer or display dimensions";
+        return 0;
+    }
+    switch (psm) {
+        case PSMCT32: case PSMCT24: case PSMCT16: case PSMCT16S: break;
+        default: ctx->error = "unsupported capture frame buffer format"; return 0;
+    }
+    // Match sdfport's corpus: magnify the drawn field, not the display's two-field weave.
+    const uint32_t bytes = (psm == PSMCT16 || psm == PSMCT16S) ? 2 : 4;
+    const uint32_t field = shown.width * (shown.height / 2) * bytes;
+    const uint32_t apart = (block > shown.block ? block - shown.block : shown.block - block) * 256;
+    const uint32_t rows = apart == field ? shown.height / 2 : shown.height;
+    if (!rows) {
+        ctx->error = "empty capture field";
+        return 0;
+    }
+    const uint32_t magnify = shown.height / rows;
+    const uint32_t phase = magnify == 2 && shown.interlace && shown.ffmd ? shown.field : 0;
+    std::vector<uint32_t> pixels(size_t(shown.width) * rows);
+    if (pcsx2hook_read_gs_frame(ctx, block, fbw, psm, 0, 0, shown.width, rows,
+                              pixels.data(), pixels.size()) != pixels.size()) return 0;
+    std::vector<uint32_t> framed(size_t(shown.width) * rows * magnify);
+    for (uint32_t host = 0; host < rows * magnify; host++) {
+        const int32_t from = int32_t(host) - int32_t(phase);
+        const uint32_t row = from <= 0 ? 0 : uint32_t(from) / magnify;
+        std::memcpy(framed.data() + size_t(host) * shown.width,
+                    pixels.data() + size_t(row) * shown.width, size_t(shown.width) * 4);
+    }
+    if (!pcsx2hook_write_png(ctx, (dir / "frame.png").string().c_str(), framed.data(),
+                             shown.width, rows * magnify)) return 0;
+    std::vector<uint8_t> alpha(framed.size());
+    for (size_t at = 0; at < framed.size(); at++) alpha[at] = uint8_t(framed[at] >> 24);
+    return pcsx2hook_write_png_gray(ctx, (dir / "alpha.png").string().c_str(), alpha.data(),
+                                    shown.width, rows * magnify);
 }
 
 int pcsx2hook_write_png(pcsx2hook_ctx* ctx, const char* path, const uint32_t* pixels,

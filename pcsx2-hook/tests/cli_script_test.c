@@ -99,9 +99,24 @@ const char* pcsx2hook_get_last_error(pcsx2hook_ctx* ctx)
 	return "fake";
 }
 
+static unsigned s_captureFrame;
+static int s_captureCount, s_stopCount, s_captureFails;
+static const char* s_capturedDir;
+
+int pcsx2hook_capture_frame(pcsx2hook_ctx* ctx, const char* directory)
+{
+	(void)ctx;
+	CHECK(s_stopCount == 0);
+	s_captureCount++;
+	s_captureFrame = s_frame;
+	s_capturedDir = directory;
+	return !s_captureFails;
+}
+
 void pcsx2hook_request_stop(pcsx2hook_ctx* ctx)
 {
 	(void)ctx;
+	s_stopCount++;
 }
 
 static void resetScript(void)
@@ -115,6 +130,9 @@ static void resetScript(void)
 	s_stepWaits = s_waitsDone = 0;
 	s_ticksSeen = s_ticksStarted = 0;
 	s_ticksTarget = 0;
+	s_captureCount = s_stopCount = s_captureFails = 0;
+	s_captureFrame = 0;
+	s_captureDir = s_capturedDir = NULL;
 	s_frame = 0;
 	s_allocResult = kBase + 0x1008;
 	s_callCountSeen = 0;
@@ -463,20 +481,48 @@ static void testTicks(void)
 	s_frame = 9;
 	runSteps();
 	CHECK(s_stepCursor == 0);
+	CHECK(s_captureCount == 0 && s_stopCount == 0);
 	s_frame = 12;
 	runSteps();
 	CHECK(s_stepCursor == s_stepCount && s_ticksTarget == 12 && !s_stepFailed);
+	CHECK(s_captureCount == 1 && s_captureFrame == 12 && s_stopCount == 1);
+	CHECK(s_capturedDir == NULL);
+	runSteps();
+	CHECK(s_captureCount == 1 && s_stopCount == 1);
 
 	CHECK(loadFile("at 10\nticks 5\n"));
+	s_captureDir = "pictures";
 	s_frame = 12;
 	runSteps();
 	CHECK(s_stepCursor == 1 && s_ticksTarget == 17);
+	CHECK(s_captureCount == 0 && s_stopCount == 0);
 	s_frame = 16;
 	runSteps();
 	CHECK(s_stepCursor == 1);
+	CHECK(s_captureCount == 0 && s_stopCount == 0);
 	s_frame = 17;
 	runSteps();
 	CHECK(s_stepCursor == 2 && !s_stepFailed);
+	CHECK(s_captureCount == 1 && s_captureFrame == 17 && s_stopCount == 1);
+	CHECK(strcmp(s_capturedDir, "pictures") == 0);
+	runSteps();
+	CHECK(s_captureCount == 1 && s_stopCount == 1);
+
+	/* No ticks must never capture, even after the script has completed. */
+	CHECK(loadFile("at 10\n"));
+	s_frame = 12;
+	runSteps();
+	s_frame = 100;
+	runSteps();
+	CHECK(s_stepCursor == 1 && !s_stepFailed);
+	CHECK(s_captureCount == 0 && s_stopCount == 0);
+
+	CHECK(loadFile("ticks 0\n"));
+	s_captureFails = 1;
+	runSteps();
+	CHECK(s_stepFailed && s_captureCount == 1 && s_stopCount == 1);
+	runSteps();
+	CHECK(s_captureCount == 1 && s_stopCount == 1);
 
 	/* refused: a second ticks, a step after ticks, a bad count */
 	CHECK(!loadFile("ticks 1\nticks 2\n"));

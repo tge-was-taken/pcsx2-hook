@@ -114,6 +114,7 @@ static int s_stepWaits;
 static int s_ticksSeen;     /* a ticks step was parsed; it must be the last step */
 static int s_ticksStarted;
 static unsigned s_ticksTarget;
+static const char* s_captureDir;
 static const char* const kOps[] = { "eq", "ne", "ge", "le", "gt", "lt" };
 
 /* A scheduled call into the guest: a game's own entry point, run at a chosen
@@ -1255,6 +1256,12 @@ static void runSteps(void)
 			if (s_frame < s_ticksTarget)
 				return;
 			fprintf(stderr, "[ticks] capture frame %u\n", s_frame);
+			if (!pcsx2hook_capture_frame(s_ctx, s_captureDir))
+			{
+				fprintf(stderr, "[ticks] capture failed: %s\n", pcsx2hook_get_last_error(s_ctx));
+				failScript();
+				return;
+			}
 			pcsx2hook_request_stop(s_ctx);
 		}
 		else if (step->kind == kStepAt)
@@ -1501,6 +1508,7 @@ static void usage(FILE* f)
 		"  --elf FILE          boot this ELF, with the disc still mounted\n"
 		"  --frames N          stop after N frames and write the traces (default 60)\n"
 		"  --out DIR           where the traces are written (default pcsx2hook_out)\n"
+		"  --capture DIR       ticks picture directory (default --out); requires --software-gs\n"
 		"  --symbols PATH      symbol map, or a directory holding <ELF>.map files\n"
 		"  --trace NAME        enable a trace; repeat for more\n"
 		"  --interp LIST       interpret these processors: all, or a comma list of ee,iop,vu0,vu1\n"
@@ -1511,7 +1519,7 @@ static void usage(FILE* f)
 		"  --script FILE       lines of \"FRAME BUTTON [HOLD]\", # comments, plus in-order steps from the\n"
 		"                      call anchor: \"wait BOUND ADDR OP VALUE\", \"write ADDR VALUE\",\n"
 		"                      \"or ADDR VALUE\", \"at [+]FRAME\", \"ticks N\" (last step: N more frames,\n"
-		"                      then print the capture frame and stop the run there),\n"
+		"                      then write frame.png, alpha.png, display.png and stop),\n"
 		"                      \"call SYM [ARGS] [-> NAME]\" (an arg is a number, &SYM, $NAME for a bound\n"
 		"                      name, or f:0x3F800000 / f:1.5 for a float in $f12 up, counted apart from\n"
 		"                      the ints), \"sequence N [A B C]\" (dds3AdminiCallSequence(N, A, B, C)),\n"
@@ -1622,6 +1630,8 @@ int main(int argc, char** argv)
 			state = argv[++i];
 		else if (strcmp(a, "--out") == 0)
 			out = argv[++i];
+		else if (strcmp(a, "--capture") == 0)
+			s_captureDir = argv[++i];
 		else if (strcmp(a, "--symbols") == 0)
 			symbols = argv[++i];
 		else if (strcmp(a, "--frames") == 0)

@@ -455,6 +455,15 @@ PCSX2HOOK_API size_t pcsx2hook_read_gs_frame(pcsx2hook_ctx* ctx, uint32_t block,
 	size_t count);
 
 /**
+ * @brief Writes frame.png (RGB drawn field), alpha.png (GS alpha), and display.png (woven RGB).
+ * @param directory Output directory, created if needed; null uses the configured dump directory.
+ * @return Non-zero if all three pictures were written; inspect the last error on failure.
+ * @note Call on the EE thread while the guest is stopped. Reads wait for queued GS work.
+ *       Matching FRAME contexts are required. Field magnification matches sdfport's corpus.
+ */
+PCSX2HOOK_API int pcsx2hook_capture_frame(pcsx2hook_ctx* ctx, const char* directory);
+
+/**
  * @brief Writes RGBA8 pixels as an uncompressed PNG, the encoder ::pcsx2hook_write_framebuffer
  *        uses. @return Non-zero on success.
  * @note The alpha is dropped. A host that reads a buffer of its own choosing needs the same

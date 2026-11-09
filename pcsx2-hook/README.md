@@ -69,6 +69,26 @@ A script line is `FRAME BUTTON [HOLD]`, `#` starts a comment, and `--help` lists
 names. Nothing reads the schedule but the pad, so getting somewhere is a matter of what the
 program does with the input, not of the host knowing anything about it.
 
+End a script with `ticks N` to run N more frames after the preceding steps, write
+`frame.png`, `alpha.png`, and `display.png`, then stop. Use `--software-gs` for the
+readback and `--frames` large enough to reach that step. Pictures go in `--out`,
+or `--capture DIR` to keep them elsewhere. Capture failure exits 1.
+
+```sh
+pcsx2hook_cli --bios bios.bin --state scene.p2s --symbols symbols.txt \
+    --software-gs --frames 40000 --out traces --capture pictures \
+    --script scene-model.txt disc.iso
+```
+
+The CLI is headless by default. `frame.png` is RGB from the current FRAME drawing
+target, with a field buffer magnified and phased like sdfport's capture corpus.
+`alpha.png` holds its GS alpha bytes as 8-bit grayscale (128 is opaque), and
+`display.png` is the emulator's RGB display weave. Both FRAME contexts must name
+the same target. The capture waits for queued GS work at the script's call
+anchor, before requesting stop; `ticks 0` does not advance a frame after its
+preceding guest calls, so draws those calls schedule for later are not included.
+The library exposes the same operation as `pcsx2hook_capture_frame`.
+
 Input only reaches what the program chooses to do. `--arg ADDR:REG:V1,V2,...` and `--arg-file
 ADDR:REG:FILE` cover the rest, feeding a register a different value at each call of one
 function, so whatever call the program makes on its own becomes the next case:
