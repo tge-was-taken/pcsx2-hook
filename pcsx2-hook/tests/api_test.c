@@ -5,6 +5,8 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <zlib.h>
+
 static int failures;
 
 static void check(int ok, const char* what) {
@@ -510,6 +512,67 @@ static int report(void) {
 	return failures != 0;
 }
 
+/* Reads a PNG's IDAT back through zlib; returns the inflated size, or -1. */
+static long readPngRows(const char* path, unsigned char* out, unsigned long cap, long* fileBytes) {
+	FILE* f = fopen(path, "rb");
+	unsigned char head[8], len[4], tag[4], crc[4];
+	unsigned char* z = NULL;
+	unsigned long zsize = 0, outSize = cap;
+	if (!f) return -1;
+	fseek(f, 0, SEEK_END);
+	*fileBytes = ftell(f);
+	fseek(f, 0, SEEK_SET);
+	if (fread(head, 1, 8, f) != 8) { fclose(f); return -1; }
+	while (fread(len, 1, 4, f) == 4 && fread(tag, 1, 4, f) == 4) {
+		unsigned long n = ((unsigned long)len[0] << 24) | (len[1] << 16) | (len[2] << 8) | len[3];
+		unsigned char* body = malloc(n ? n : 1);
+		if (fread(body, 1, n, f) != n || fread(crc, 1, 4, f) != 4) { free(body); break; }
+		if (memcmp(tag, "IDAT", 4) == 0) {
+			z = realloc(z, zsize + n);
+			memcpy(z + zsize, body, n);
+			zsize += n;
+		}
+		free(body);
+	}
+	fclose(f);
+	if (!z || uncompress(out, &outSize, z, zsize) != Z_OK) { free(z); return -1; }
+	free(z);
+	return (long)outSize;
+}
+
+static void testPng(pcsx2hook_ctx* ctx) {
+	enum { W = 64, H = 32 };
+	static uint32_t pixels[W * H];
+	static unsigned char gray[W * H], rows[H * (1 + W * 3)];
+	char path[64];
+	long size, fileBytes = 0;
+	int x, y, same = 1;
+	for (y = 0; y < H; y++)
+		for (x = 0; x < W; x++) {
+			pixels[y * W + x] = (uint32_t)(x * 4) | ((uint32_t)(y * 8) << 8) | ((uint32_t)((x ^ y) & 0xFF) << 16);
+			gray[y * W + x] = (unsigned char)(x + y);
+		}
+	snprintf(path, sizeof(path), "/tmp/pcsx2hook_png_%d.png", (int)getpid());
+	check(pcsx2hook_write_png(ctx, path, pixels, W, H), "write_png succeeds");
+	size = readPngRows(path, rows, sizeof(rows), &fileBytes);
+	check(size == H * (1 + W * 3), "write_png's rows inflate to the frame's size");
+	for (y = 0; y < H && size > 0; y++)
+		for (x = 0; x < W; x++) {
+			const unsigned char* px = rows + y * (1 + W * 3) + 1 + x * 3;
+			const uint32_t v = pixels[y * W + x];
+			if (px[0] != (v & 0xFF) || px[1] != ((v >> 8) & 0xFF) || px[2] != ((v >> 16) & 0xFF)) same = 0;
+		}
+	check(same, "write_png keeps every pixel");
+	check(fileBytes > 0 && fileBytes < H * (1 + W * 3), "write_png deflates");
+	check(pcsx2hook_write_png_gray(ctx, path, gray, W, H), "write_png_gray succeeds");
+	size = readPngRows(path, rows, sizeof(rows), &fileBytes);
+	check(size == H * (1 + W), "write_png_gray's rows inflate to the frame's size");
+	same = size > 0;
+	for (y = 0; y < H && same; y++) same = memcmp(rows + y * (1 + W) + 1, gray + y * W, W) == 0;
+	check(same, "write_png_gray keeps every value");
+	unlink(path);
+}
+
 int main(int argc, char** argv) {
 	const char* mode = argc > 1 ? argv[1] : "";
 	if (strcmp(mode, "boot") == 0) {
@@ -557,6 +620,7 @@ int main(int argc, char** argv) {
 		testSizeContract(ctx);
 		testErrors(ctx);
 		testDrawStack(ctx);
+		testPng(ctx);
 		testModes(ctx);
 		pcsx2hook_destroy(ctx);
 	}

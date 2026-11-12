@@ -14,6 +14,8 @@
 #include <unordered_map>
 #include <vector>
 
+#include <zlib.h>
+
 #include "Memory.h"
 #include "common/Console.h"
 #include "common/Error.h"
@@ -808,22 +810,6 @@ size_t pcsx2hook_get_gs_rows(pcsx2hook_ctx* ctx, uint32_t frame, char* out, size
 
 namespace {
 
-uint32_t png_crc32(const uint8_t* data, size_t length, uint32_t crc = 0) {
-    static uint32_t table[256];
-    static bool built = false;
-    if (!built) {
-        for (uint32_t i = 0; i < 256; i++) {
-            uint32_t c = i;
-            for (int k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320u ^ (c >> 1)) : (c >> 1);
-            table[i] = c;
-        }
-        built = true;
-    }
-    crc = ~crc;
-    for (size_t i = 0; i < length; i++) crc = table[(crc ^ data[i]) & 0xFF] ^ (crc >> 8);
-    return ~crc;
-}
-
 void putBe32(std::vector<uint8_t>& out, uint32_t v) {
     out.push_back(uint8_t(v >> 24));
     out.push_back(uint8_t(v >> 16));
@@ -836,37 +822,22 @@ void putChunk(std::FILE* f, const char tag[4], const std::vector<uint8_t>& body)
     putBe32(framed, uint32_t(body.size()));
     framed.insert(framed.end(), tag, tag + 4);
     framed.insert(framed.end(), body.begin(), body.end());
-    const uint32_t crc = png_crc32(framed.data() + 4, framed.size() - 4);
+    const uint32_t crc = uint32_t(crc32(0, framed.data() + 4, uInt(framed.size() - 4)));
     putBe32(framed, crc);
     std::fwrite(framed.data(), 1, framed.size(), f);
 }
 
-/// A zlib stream of stored blocks, which is a valid deflate stream that compresses nothing.
-void putIdat(std::FILE* f, const std::vector<uint8_t>& raw) {
-    std::vector<uint8_t> z{0x78, 0x01};
-    uint32_t a = 1;
-    uint32_t b = 0;
-    for (uint8_t byte : raw) {
-        a = (a + byte) % 65521;
-        b = (b + a) % 65521;
-    }
-    for (size_t at = 0; at < raw.size() || raw.empty(); ) {
-        const size_t left = raw.size() - at;
-        const uint16_t block = uint16_t(left > 65535 ? 65535 : left);
-        z.push_back(uint8_t(block == left ? 1 : 0));
-        z.push_back(uint8_t(block & 0xFF));
-        z.push_back(uint8_t(block >> 8));
-        z.push_back(uint8_t(~block & 0xFF));
-        z.push_back(uint8_t((~block >> 8) & 0xFF));
-        z.insert(z.end(), raw.begin() + long(at), raw.begin() + long(at + block));
-        at += block;
-        if (at >= raw.size()) break;
-    }
-    putBe32(z, (b << 16) | a);
+/// The rows deflated by zlib at level 6, which shrinks a frame about fivefold.
+bool putIdat(std::FILE* f, const std::vector<uint8_t>& raw) {
+    uLongf size = compressBound(uLong(raw.size()));
+    std::vector<uint8_t> z(size);
+    if (compress2(z.data(), &size, raw.data(), uLong(raw.size()), 6) != Z_OK) return false;
+    z.resize(size);
     putChunk(f, "IDAT", z);
+    return true;
 }
 
-void writePng(std::FILE* f, uint32_t width, uint32_t height, const std::vector<uint8_t>& raw,
+bool writePng(std::FILE* f, uint32_t width, uint32_t height, const std::vector<uint8_t>& raw,
               uint8_t colour = 2) {
     static const uint8_t signature[8] = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'};
     std::fwrite(signature, 1, sizeof(signature), f);
@@ -881,8 +852,9 @@ void writePng(std::FILE* f, uint32_t width, uint32_t height, const std::vector<u
     ihdr.push_back(0);
     putChunk(f, "IHDR", ihdr);
 
-    putIdat(f, raw);
+    if (!putIdat(f, raw)) return false;
     putChunk(f, "IEND", {});
+    return true;
 }
 
 }  // namespace
@@ -988,8 +960,6 @@ int pcsx2hook_write_png(pcsx2hook_ctx* ctx, const char* path, const uint32_t* pi
         ctx->error = "cannot open the picture file";
         return 0;
     }
-    // Uncompressed PNG: stored deflate blocks need no compression library, so the runner gains a
-    // format every viewer opens without the API gaining a dependency.
     std::vector<uint8_t> raw;
     raw.reserve(size_t(height) * (1 + size_t(width) * 3));
     for (uint32_t y = 0; y < height; y++) {
@@ -1001,8 +971,12 @@ int pcsx2hook_write_png(pcsx2hook_ctx* ctx, const char* path, const uint32_t* pi
             raw.push_back(uint8_t((pixel >> 16) & 0xFF));
         }
     }
-    writePng(f, width, height, raw);
+    const bool written = writePng(f, width, height, raw);
     std::fclose(f);
+    if (!written) {
+        ctx->error = "cannot deflate the picture";
+        return 0;
+    }
     return 1;
 }
 
@@ -1020,8 +994,12 @@ int pcsx2hook_write_png_gray(pcsx2hook_ctx* ctx, const char* path, const uint8_t
         raw.push_back(0);  // filter: none
         raw.insert(raw.end(), values + size_t(y) * width, values + size_t(y + 1) * width);
     }
-    writePng(f, width, height, raw, 0);
+    const bool written = writePng(f, width, height, raw, 0);
     std::fclose(f);
+    if (!written) {
+        ctx->error = "cannot deflate the picture";
+        return 0;
+    }
     return 1;
 }
 

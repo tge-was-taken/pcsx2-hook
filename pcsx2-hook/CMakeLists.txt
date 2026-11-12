@@ -38,7 +38,7 @@ if(NOT WIN32)
 	target_link_options(pcsx2hook PRIVATE -Wl,--no-undefined)
 endif()
 
-target_link_libraries(pcsx2hook PRIVATE PCSX2_FLAGS PCSX2)
+target_link_libraries(pcsx2hook PRIVATE PCSX2_FLAGS PCSX2 ZLIB::ZLIB)
 
 install(TARGETS pcsx2hook LIBRARY DESTINATION lib)
 install(DIRECTORY include/ DESTINATION include)
@@ -49,7 +49,7 @@ set_target_properties(pcsx2hook_cli PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED
 install(TARGETS pcsx2hook_cli RUNTIME DESTINATION bin)
 
 add_executable(pcsx2hook_api_test tests/api_test.c)
-target_link_libraries(pcsx2hook_api_test PRIVATE pcsx2hook)
+target_link_libraries(pcsx2hook_api_test PRIVATE pcsx2hook ZLIB::ZLIB)
 set_target_properties(pcsx2hook_api_test PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
 add_test(NAME pcsx2hook_api COMMAND pcsx2hook_api_test)
 
